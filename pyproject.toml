@@ -1,0 +1,57 @@
+[project]
+name = "auto-dgp"
+version = "0.1.0"
+description = "Autonomous research loop on derivative Gaussian processes"
+requires-python = ">=3.12"
+dependencies = [
+    "torch>=2.4",
+    "numpy",
+    "scipy",
+    "matplotlib",
+    "pandas",
+    "pyyaml",
+    "tqdm",
+]
+
+# uv-native dev group: installed by default with `uv sync`, run as `uv run ruff check .`
+[dependency-groups]
+dev = ["ruff>=0.6", "pytest>=8"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["gp*", "data*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+# Lint/format only our own code. gp/tera is external (submodule + wrapper); never edit it.
+extend-exclude = ["gp/tera"]
+
+[tool.ruff.format]
+# Respect the "magic trailing comma": a trailing comma after the last parameter/element forces
+# the formatter to keep it exploded one-per-line and never scrunch it back. This is how the
+# spaced-out signature style is preserved — write each param on its own line with a trailing comma
+# and `ruff format` will never collapse it. Run `uv run ruff format .` to apply.
+skip-magic-trailing-comma = false
+
+[tool.ruff.lint]
+#   I   -> isort: import grouping (stdlib -> third-party -> first-party) + alphabetical ordering
+#   TID -> flake8-tidy-imports: ban relative imports (everything must be absolute, e.g. gp.kernels.base)
+select = ["E", "F", "W", "I", "UP", "B", "TID"]
+ignore = [
+    "E741",  # ambiguous variable name (l for lengthscale is standard in GP code)
+    "E501",  # line too long (formatter handles it; some equations run long)
+    "E402",  # module import not at top: experiment scripts insert repo root on sys.path first
+    "B008",  # function call in default arg (not used dangerously here)
+]
+
+[tool.ruff.lint.flake8-tidy-imports]
+# Force absolute imports throughout (no `from .base import ...`). TID252 flags relative imports.
+ban-relative-imports = "all"
+
+[tool.ruff.lint.isort]
+# Our own code is the `gp` and `data` packages -> the first-party group, sorted last and alphabetically.
+known-first-party = ["gp", "data"]

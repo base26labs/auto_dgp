@@ -1,0 +1,16 @@
+# large binary datasets (regenerate with data/get_nbody.py -- see docs/STARTUP.md)
+data/nbody/*.npz
+
+# per-run outputs (results.tsv stays untracked per CLAUDE.md loop rules)
+runs/
+results.tsv
+outputs/
+
+# caches and local settings
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+.pytest_cache/
+.ruff_cache/
+.claude/settings.local.json

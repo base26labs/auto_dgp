@@ -1,0 +1,3 @@
+[submodule "gp/tera/vendor"]
+	path = gp/tera/vendor
+	url = https://github.com/hseung88/tera.git
