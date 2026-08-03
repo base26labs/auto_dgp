@@ -43,6 +43,22 @@ identity part), `B` (grad–grad outer-product part) — so the matvec is `O(N²
   Blackbox Matrix–Matrix Gaussian Process Inference with GPU Acceleration.* NeurIPS (matrix-free
   kernel CG / BBMM). <https://arxiv.org/abs/1809.11165>
 
+**ORBIT prior-art boundary** — `gp/orbit/`, `docs/ORBIT_METHOD.md`.  ORBIT applies structured PCG and
+computational-error accounting specifically to TERA's scalar local Schur complement.  Matrix-free
+derivative GPs, preconditioned derivative-GP solves, computationally conservative GP posteriors, and
+goal-oriented Gaussian reduction all predate it:
+
+- Eriksson, D., Dong, K., Lee, E., Bindel, D. & Wilson, A. G. (2018). *Scaling Gaussian Process
+  Regression with Derivatives.* NeurIPS. <https://proceedings.neurips.cc/paper/2018/hash/c2f32522a84d5e6357e6abac087f1b0b-Abstract.html>
+- Wenger, J., Pleiss, G., Pförtner, M., Hennig, P. & Cunningham, J. P. (2022). *Posterior and
+  Computational Uncertainty in Gaussian Processes.* NeurIPS.
+  <https://proceedings.neurips.cc/paper_files/paper/2022/hash/4683beb6bab325650db13afd05d1a14a-Abstract-Conference.html>
+- Spantini, A., Cui, T., Willcox, K., Tenorio, L. & Marzouk, Y. (2017). *Goal-Oriented Optimal
+  Approximations of Bayesian Linear Inverse Problems.* SIAM J. Sci. Comput.
+  <https://arxiv.org/abs/1607.01881>
+- Giraldi, L., Le Maître, O. P., Hoteit, I. & Knio, O. M. (2017). *Optimal Projection of
+  Observations in a Bayesian Setting.* <https://arxiv.org/abs/1709.06606>
+
 **Vecchia approximation** — the basis of the TERA baseline.
 - Vecchia, A. V. (1988). *Estimation and Model Identification for Continuous Spatial Processes.*
   J. R. Stat. Soc. B. <https://doi.org/10.1111/j.2517-6161.1988.tb01729.x>

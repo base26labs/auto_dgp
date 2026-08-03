@@ -4,7 +4,10 @@ version = "0.1.0"
 description = "Autonomous research loop on derivative Gaussian processes"
 requires-python = ">=3.12"
 dependencies = [
-    "torch>=2.4",
+    # The cluster's R575 driver supports CUDA 12.x but not CUDA 13.x.  PyPI's
+    # current Linux torch wheel uses CUDA 13, so use PyTorch's cu126 index and
+    # retain the last compatible release family in the frozen environment.
+    "torch>=2.4,<2.13",
     "numpy",
     "scipy",
     "matplotlib",
@@ -23,6 +26,16 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["gp*", "data*"]
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cu126", marker = "sys_platform == 'linux'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
 
 [tool.ruff]
 line-length = 100
