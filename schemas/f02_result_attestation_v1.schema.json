@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://auto-dgp.invalid/schemas/f02_result_attestation_v1.schema.json",
+  "title": "F02 future result-to-release attestation scaffold",
+  "description": "Defined for validator development only; the v1 ledger mutation API is source-disabled.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "task_identity",
+    "bundle_hashes",
+    "release",
+    "result_file_sha256"
+  ],
+  "properties": {
+    "schema_version": {"const": "f02_result_attestation_v1"},
+    "task_identity": {"type": "object", "minProperties": 1},
+    "bundle_hashes": {"$ref": "#/$defs/bundle_hashes"},
+    "release": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "release_id",
+        "experiment_id",
+        "protocol_id",
+        "protocol_path",
+        "protocol_sha256",
+        "protocol_binding_sha256",
+        "recipe_payload_sha256",
+        "recipe_file_sha256",
+        "source_commit",
+        "execution_commit",
+        "catalog_sha256",
+        "method_configuration_sha256"
+      ],
+      "properties": {
+        "release_id": {"$ref": "#/$defs/sha256"},
+        "experiment_id": {"type": "string", "minLength": 1},
+        "protocol_id": {"type": "string", "minLength": 1},
+        "protocol_path": {"type": "string", "minLength": 1},
+        "protocol_sha256": {"$ref": "#/$defs/sha256"},
+        "protocol_binding_sha256": {"$ref": "#/$defs/sha256"},
+        "recipe_payload_sha256": {"$ref": "#/$defs/sha256"},
+        "recipe_file_sha256": {"$ref": "#/$defs/sha256"},
+        "source_commit": {"$ref": "#/$defs/oid"},
+        "execution_commit": {"$ref": "#/$defs/oid"},
+        "catalog_sha256": {"$ref": "#/$defs/sha256"},
+        "method_configuration_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "result_file_sha256": {"$ref": "#/$defs/sha256"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "oid": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "bundle_hashes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dataset_file_sha256",
+        "metadata_file_sha256",
+        "sha256_manifest_file_sha256",
+        "dataset_content_sha256"
+      ],
+      "properties": {
+        "dataset_file_sha256": {"$ref": "#/$defs/sha256"},
+        "metadata_file_sha256": {"$ref": "#/$defs/sha256"},
+        "sha256_manifest_file_sha256": {"$ref": "#/$defs/sha256"},
+        "dataset_content_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    }
+  }
+}

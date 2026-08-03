@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://auto-dgp.invalid/schemas/f02_catalog_release_marker_v1.schema.json",
+  "title": "F02 future immutable catalog release marker scaffold",
+  "description": "No v1 marker can be created by the source-disabled public release mutation API.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "catalog_path",
+    "catalog_sha256",
+    "ledger_path",
+    "release_id",
+    "recipe_file_sha256",
+    "recipe_payload_sha256",
+    "execution_commit",
+    "initial_ledger_state_sha256",
+    "marker_sha256"
+  ],
+  "properties": {
+    "schema_version": {"const": "f02_catalog_release_marker_v1"},
+    "catalog_path": {"type": "string", "minLength": 1},
+    "catalog_sha256": {"$ref": "#/$defs/sha256"},
+    "ledger_path": {"type": "string", "minLength": 1},
+    "release_id": {"$ref": "#/$defs/sha256"},
+    "recipe_file_sha256": {"$ref": "#/$defs/sha256"},
+    "recipe_payload_sha256": {"$ref": "#/$defs/sha256"},
+    "execution_commit": {"$ref": "#/$defs/oid"},
+    "initial_ledger_state_sha256": {"$ref": "#/$defs/sha256"},
+    "marker_sha256": {"$ref": "#/$defs/sha256"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "oid": {"type": "string", "pattern": "^[0-9a-f]{40}$"}
+  }
+}

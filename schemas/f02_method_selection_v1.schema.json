@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://auto-dgp.invalid/schemas/f02_method_selection_v1.schema.json",
+  "title": "F02 globally selected method configuration",
+  "description": "Selection evidence fields are content hashes only; v1 provides no semantic evidence validator and is not release authorization.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "method_id",
+    "optimizer_updates",
+    "configuration",
+    "selection_evidence",
+    "orbit_m_by_dimension"
+  ],
+  "properties": {
+    "schema_version": {"const": "f02_method_selection_v1"},
+    "method_id": {
+      "enum": ["internal-shared-fit", "dsoftki-512", "ddsvgp-512"]
+    },
+    "optimizer_updates": {"enum": [20, 50, 100]},
+    "configuration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["by_dimension_and_seed"],
+      "properties": {
+        "by_dimension_and_seed": {
+          "type": "array",
+          "minItems": 15,
+          "maxItems": 15,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["configuration_id", "dimension", "seed", "payload", "sha256"],
+            "properties": {
+              "configuration_id": {"type": "string", "pattern": "^D(12|24|36|48|60)-seed(11|29|47)$"},
+              "dimension": {"enum": [12, 24, 36, 48, 60]},
+              "seed": {"enum": [11, 29, 47]},
+              "payload": {"type": "object", "minProperties": 1},
+              "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+            }
+          }
+        }
+      }
+    },
+    "selection_evidence": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["role", "sha256"],
+        "properties": {
+          "role": {"type": "string", "minLength": 1},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+        }
+      }
+    },
+    "orbit_m_by_dimension": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["12", "24", "36", "48", "60"],
+          "properties": {
+            "12": {"enum": [75, 100, 150, 200]},
+            "24": {"enum": [75, 100, 150, 200]},
+            "36": {"enum": [75, 100, 150, 200]},
+            "48": {"enum": [75, 100, 150, 200]},
+            "60": {"enum": [75, 100, 150, 200]}
+          }
+        }
+      ]
+    }
+  }
+}

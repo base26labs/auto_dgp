@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://auto-dgp.invalid/schemas/f02_one_release_ledger_v1.schema.json",
+  "title": "F02 non-executable one-release ledger scaffold",
+  "description": "Version 1 cannot be created or mutated by the public API. The actual runner, semantic evidence validators, and immutable result store are not integrated.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "authorization", "events", "ledger_state_sha256"],
+  "properties": {
+    "schema_version": {"const": "f02_one_release_ledger_v1"},
+    "authorization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "recipe_schema_version",
+        "release_scaffold_status",
+        "release_mutations_enabled",
+        "development_evidence_semantically_verified",
+        "experiment_id",
+        "protocol_id",
+        "protocol_path",
+        "protocol_sha256",
+        "protocol_binding_sha256",
+        "recipe_path",
+        "recipe_file_sha256",
+        "recipe_payload_sha256",
+        "source_commit",
+        "source_tree",
+        "execution_commit",
+        "execution_tree",
+        "catalog_sha256",
+        "required_method_ids",
+        "expected_bundle_count",
+        "expected_method_count",
+        "expected_task_count",
+        "expected_task_ids_sha256",
+        "release_id"
+      ],
+      "properties": {
+        "recipe_schema_version": {"const": "f02_global_confirmatory_recipe_v1"},
+        "release_scaffold_status": {"const": "non_executable_scaffold_v1"},
+        "release_mutations_enabled": {"const": false},
+        "development_evidence_semantically_verified": {"const": false},
+        "experiment_id": {"type": "string", "minLength": 1},
+        "protocol_id": {"type": "string", "minLength": 1},
+        "protocol_path": {"type": "string", "minLength": 1},
+        "protocol_sha256": {"$ref": "#/$defs/sha256"},
+        "protocol_binding_sha256": {"$ref": "#/$defs/sha256"},
+        "recipe_path": {"type": "string", "minLength": 1},
+        "recipe_file_sha256": {"$ref": "#/$defs/sha256"},
+        "recipe_payload_sha256": {"$ref": "#/$defs/sha256"},
+        "source_commit": {"$ref": "#/$defs/oid"},
+        "source_tree": {"$ref": "#/$defs/oid"},
+        "execution_commit": {"$ref": "#/$defs/oid"},
+        "execution_tree": {"$ref": "#/$defs/oid"},
+        "catalog_sha256": {"$ref": "#/$defs/sha256"},
+        "required_method_ids": {
+          "const": ["internal-shared-fit", "dsoftki-512", "ddsvgp-512"]
+        },
+        "expected_bundle_count": {"const": 50},
+        "expected_method_count": {"const": 3},
+        "expected_task_count": {"const": 450},
+        "expected_task_ids_sha256": {"$ref": "#/$defs/sha256"},
+        "release_id": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "sequence",
+          "kind",
+          "previous_event_sha256",
+          "payload",
+          "event_sha256"
+        ],
+        "properties": {
+          "sequence": {"type": "integer", "minimum": 0},
+          "kind": {"enum": ["attempt_started", "attempt_finished", "release_sealed"]},
+          "previous_event_sha256": {
+            "oneOf": [{"type": "null"}, {"$ref": "#/$defs/sha256"}]
+          },
+          "payload": {"type": "object"},
+          "event_sha256": {"$ref": "#/$defs/sha256"}
+        }
+      }
+    },
+    "ledger_state_sha256": {"$ref": "#/$defs/sha256"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "oid": {"type": "string", "pattern": "^[0-9a-f]{40}$"}
+  }
+}

@@ -1,0 +1,313 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://auto-dgp.invalid/schemas/f02_global_confirmatory_recipe_v1.schema.json",
+  "title": "F02 non-executable global confirmatory recipe scaffold",
+  "description": "Version 1 is structurally checkable but not releasable: semantic development-evidence validation, the actual runner, and an immutable result store are not integrated.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "payload", "payload_sha256"],
+  "properties": {
+    "schema_version": {"const": "f02_global_confirmatory_recipe_v1"},
+    "payload_sha256": {"$ref": "#/$defs/sha256"},
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "study_id",
+        "experiment_id",
+        "protocol_id",
+        "phase",
+        "release_scaffold_status",
+        "development_evidence_semantically_verified",
+        "release",
+        "artifacts",
+        "evaluation",
+        "confirmatory_bundles",
+        "confirmatory_bundles_sha256",
+        "methods",
+        "expected_task_grids",
+        "accounting"
+      ],
+      "properties": {
+        "study_id": {"const": "F02"},
+        "experiment_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$"},
+        "protocol_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$"},
+        "phase": {"const": "confirmatory"},
+        "release_scaffold_status": {"const": "non_executable_scaffold_v1"},
+        "development_evidence_semantically_verified": {"const": false},
+        "release": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "source_commit",
+            "source_tree",
+            "recipe_path",
+            "execution_commit_binding"
+          ],
+          "properties": {
+            "source_commit": {"$ref": "#/$defs/oid"},
+            "source_tree": {"$ref": "#/$defs/oid"},
+            "recipe_path": {"type": "string", "pattern": "^[^/][^\\n]*\\.json$"},
+            "execution_commit_binding": {
+              "const": "one-parent recipe-only add recorded by one-release ledger"
+            }
+          }
+        },
+        "artifacts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["protocol", "catalog", "dependencies", "tera_submodule"],
+          "properties": {
+            "protocol": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["protocol_id", "path", "sha256", "binding_sha256"],
+              "properties": {
+                "protocol_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$"},
+                "path": {"type": "string", "pattern": "^docs/[^\\n]*\\.md$"},
+                "sha256": {"$ref": "#/$defs/sha256"},
+                "binding_sha256": {"$ref": "#/$defs/sha256"}
+              }
+            },
+            "catalog": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "schema_version",
+                "catalog_type",
+                "path",
+                "sha256",
+                "generation_git_commit",
+                "generation_git_tree"
+              ],
+              "properties": {
+                "schema_version": {"const": 1},
+                "catalog_type": {"const": "f02_nbody_confirmatory_data"},
+                "path": {"type": "string", "minLength": 1},
+                "sha256": {"$ref": "#/$defs/sha256"},
+                "generation_git_commit": {"$ref": "#/$defs/oid"},
+                "generation_git_tree": {"$ref": "#/$defs/oid"}
+              }
+            },
+            "dependencies": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "items": {"$ref": "#/$defs/path_hash"}
+            },
+            "tera_submodule": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["path", "commit"],
+              "properties": {
+                "path": {"const": "gp/tera/vendor"},
+                "commit": {"$ref": "#/$defs/oid"}
+              }
+            }
+          }
+        },
+        "evaluation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["split", "design", "optimizer_seeds"],
+          "properties": {
+            "split": {"const": "test"},
+            "design": {"const": "primary"},
+            "optimizer_seeds": {"const": [11, 29, 47]}
+          }
+        },
+        "confirmatory_bundles": {
+          "type": "array",
+          "minItems": 50,
+          "maxItems": 50,
+          "items": {"type": "object"}
+        },
+        "confirmatory_bundles_sha256": {"$ref": "#/$defs/sha256"},
+        "methods": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "prefixItems": [
+            {"$ref": "#/$defs/internal_method"},
+            {"$ref": "#/$defs/dsoftki_method"},
+            {"$ref": "#/$defs/ddsvgp_method"}
+          ],
+          "items": false
+        },
+        "expected_task_grids": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "prefixItems": [
+            {"$ref": "#/$defs/internal_grid"},
+            {"$ref": "#/$defs/dsoftki_grid"},
+            {"$ref": "#/$defs/ddsvgp_grid"}
+          ],
+          "items": false
+        },
+        "accounting": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "expected_bundle_count",
+            "expected_method_count",
+            "expected_tasks_per_method",
+            "expected_task_count",
+            "expected_task_ids_sha256"
+          ],
+          "properties": {
+            "expected_bundle_count": {"const": 50},
+            "expected_method_count": {"const": 3},
+            "expected_tasks_per_method": {"const": 150},
+            "expected_task_count": {"const": 450},
+            "expected_task_ids_sha256": {"$ref": "#/$defs/sha256"}
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "oid": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "path_hash": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "method_base": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "method_id",
+        "arms",
+        "optimizer_updates",
+        "optimizer_seeds",
+        "configuration",
+        "configuration_sha256",
+        "selection_evidence",
+        "orbit_m_by_dimension"
+      ],
+      "properties": {
+        "method_id": {"type": "string"},
+        "arms": {"type": "array", "minItems": 1},
+        "optimizer_updates": {"enum": [20, 50, 100]},
+        "optimizer_seeds": {"const": [11, 29, 47]},
+        "configuration": {"$ref": "#/$defs/configuration_grid"},
+        "configuration_sha256": {"$ref": "#/$defs/sha256"},
+        "selection_evidence": {"type": "array", "minItems": 2, "maxItems": 2},
+        "orbit_m_by_dimension": {"type": ["object", "null"]}
+      }
+    },
+    "internal_method": {
+      "allOf": [
+        {"$ref": "#/$defs/method_base"},
+        {
+          "properties": {
+            "method_id": {"const": "internal-shared-fit"},
+            "arms": {
+              "const": [
+                "TERA-50",
+                "ORBIT-50",
+                "ORBIT-resource",
+                "value-only-conditional-50"
+              ]
+            },
+            "orbit_m_by_dimension": {"type": "object"}
+          }
+        }
+      ]
+    },
+    "dsoftki_method": {
+      "allOf": [
+        {"$ref": "#/$defs/method_base"},
+        {
+          "properties": {
+            "method_id": {"const": "dsoftki-512"},
+            "arms": {"const": ["DSoftKI-512"]},
+            "orbit_m_by_dimension": {"type": "null"}
+          }
+        }
+      ]
+    },
+    "ddsvgp_method": {
+      "allOf": [
+        {"$ref": "#/$defs/method_base"},
+        {
+          "properties": {
+            "method_id": {"const": "ddsvgp-512"},
+            "arms": {"const": ["DDSVGP-512"]},
+            "orbit_m_by_dimension": {"type": "null"}
+          }
+        }
+      ]
+    },
+    "configuration_grid": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["by_dimension_and_seed"],
+      "properties": {
+        "by_dimension_and_seed": {
+          "type": "array",
+          "minItems": 15,
+          "maxItems": 15,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["configuration_id", "dimension", "seed", "payload", "sha256"],
+            "properties": {
+              "configuration_id": {"type": "string", "pattern": "^D(12|24|36|48|60)-seed(11|29|47)$"},
+              "dimension": {"enum": [12, 24, 36, 48, 60]},
+              "seed": {"enum": [11, 29, 47]},
+              "payload": {"type": "object", "minProperties": 1},
+              "sha256": {"$ref": "#/$defs/sha256"}
+            }
+          }
+        }
+      }
+    },
+    "grid_base": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "method_id",
+        "ordering",
+        "expected_bundle_count",
+        "expected_seed_count",
+        "expected_task_count",
+        "tasks_sha256",
+        "tasks"
+      ],
+      "properties": {
+        "method_id": {"type": "string"},
+        "ordering": {"const": "confirmatory-replica-major,particle-major,seed-major"},
+        "expected_bundle_count": {"const": 50},
+        "expected_seed_count": {"const": 3},
+        "expected_task_count": {"const": 150},
+        "tasks_sha256": {"$ref": "#/$defs/sha256"},
+        "tasks": {"type": "array", "minItems": 150, "maxItems": 150}
+      }
+    },
+    "internal_grid": {
+      "allOf": [
+        {"$ref": "#/$defs/grid_base"},
+        {"properties": {"method_id": {"const": "internal-shared-fit"}}}
+      ]
+    },
+    "dsoftki_grid": {
+      "allOf": [
+        {"$ref": "#/$defs/grid_base"},
+        {"properties": {"method_id": {"const": "dsoftki-512"}}}
+      ]
+    },
+    "ddsvgp_grid": {
+      "allOf": [
+        {"$ref": "#/$defs/grid_base"},
+        {"properties": {"method_id": {"const": "ddsvgp-512"}}}
+      ]
+    }
+  }
+}
