@@ -7,6 +7,46 @@ scope downgrades are reported in place, loudly, naming the check that failed.
 
 ---
 
+## 2026-08-03 — F02 optimizer pilot: **stopped by the preregistered same-`m` gate**
+
+The original F02 protocol did **not** pass development validation and must not be used for a
+confirmatory or positive predictive claim.  Its first clean, exclusive-L40S pilot (Slurm job
+2810520; replica 0, `D=12`, 20 TERA updates, seed 11, commit
+`e27a0cd431d5a9d5258013a097b3c99cdb3907c8`) failed before optimizer selection or test access.
+Released float32 TERA-50 and ORBIT-50, using the same fitted parameters and neighbours, differed by
+`0.1805518866` in predictive mean and `0.0009048041` in latent variance, above the registered
+`1e-4` gate.  The strict aggregate at BC path
+`runs/f02_internal_optimizer/job-2810520/pilot-aggregate.json` (SHA-256
+`fd4634f8ca84aa7e0235142118f617678dd498271e38f60b3731e37cc68b9392`) records one failed task,
+zero valid tasks, `declared_subset_ready=false`, `analysis_ready=false`, and
+`selected_update=null`.  The remaining 134 development jobs were not run.
+
+A development-only diagnostic on the same corpus and fitted parameters (exclusive-L40S job
+2810525, commit `d81e873ee293d60192977c6f62e8ae9d8030cd00`) localized the discrepancy.  Tightening ORBIT's
+float32 CG target from `1e-5` to `1e-8` did not reduce it: all solves reached the 300-iteration cap
+and the worst mean difference remained `0.1807389259`.  Prediction-only float64 TERA-50 and
+ORBIT-50 instead agreed to `7.1487e-10` in mean and `8.1199e-14` in latent variance, while released
+TERA itself changed by `0.1806576252` in mean and `0.0009076875` in variance between float32 and
+float64.  The diagnostic artifact is
+`runs/f02_same_m_diagnostic/replica0-d12-steps20-seed11-d81e873.json` (SHA-256
+`50c0a5d0b9e9ec7610c6f0718a951c956bf7288ae885ae963348490a50765d95`).
+
+Every local scaled difference matrix retained numerical rank 6 in float32, with reported condition
+numbers from `2.59e7` to `4.74e8`.  This is consistent with the six center-of-mass and total-momentum
+constraints in the `D=12` physical system and with instability in released TERA's redundant
+`m^2`-coordinate float32 Cholesky, rather than an ORBIT stopping-tolerance error.  It is strong
+diagnostic evidence, not yet an independent-oracle proof: fp32 SVD rank truncation remains a smaller
+alternative explanation to test explicitly.
+
+No tolerance will be relaxed and the frozen F02 protocol will not be silently rewritten.  Any
+follow-up must have a new protocol identifier, preserve released fp32 TERA as an operational
+baseline, add an independently implemented float64 dense support-space oracle, separately gate
+support64 against ORBIT64 and ORBIT32 against ORBIT64, and compare larger-`m` ORBIT against ORBIT-50
+at the same dtype.  Confirmatory labels remain locked until that revised protocol, thresholds, full
+development selection, global recipe, and one-release authorization are frozen.
+
+---
+
 ## 2026-08-03 — F02 confirmatory N-body corpus: **frozen and integrity-ready**
 
 This is a data/provenance milestone, not a predictive result.  The preregistered F02 generator ran

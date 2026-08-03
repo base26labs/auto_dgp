@@ -25,6 +25,7 @@ from data.load_nbody_confirmatory import load_prepared_confirmatory_bundle
 from experiments.f02_internal_models import (
     FrozenTERAParameters,
     ScalarPrediction,
+    TensorConfirmatorySplit,
     fit_released_tera,
     freeze_tera_parameters,
     predict_orbit,
@@ -41,8 +42,9 @@ from experiments.f02_internal_task import (
     save_internal_result,
     validate_catalog_identity,
 )
+from experiments.f02_support_dense_oracle import predict_local_dense_support
 
-DIAGNOSTIC_SCHEMA_VERSION = "f02_same_m_diagnostic_v1"
+DIAGNOSTIC_SCHEMA_VERSION = "f02_same_m_diagnostic_v2"
 
 
 def _comparison(reference: ScalarPrediction, candidate: ScalarPrediction) -> dict[str, Any]:
@@ -61,6 +63,43 @@ def _cast_prediction(prediction: ScalarPrediction, dtype: torch.dtype) -> Scalar
         mean=prediction.mean.to(dtype=dtype),
         latent_variance=prediction.latent_variance.to(dtype=dtype),
         observation_variance=prediction.observation_variance.to(dtype=dtype),
+    )
+
+
+def _float32_scalar_to_float64(value: float, *, device: torch.device) -> float:
+    return float(torch.as_tensor(value, dtype=torch.float32, device=device).to(torch.float64))
+
+
+def _quantized_split_to_float64(
+    split: TensorConfirmatorySplit,
+) -> TensorConfirmatorySplit:
+    """Promote an already quantized float32 split without revisiting raw arrays."""
+
+    if split.X.dtype != torch.float32:
+        raise TypeError("the source split must already be quantized to float32")
+    return replace(
+        split,
+        X=split.X.to(dtype=torch.float64),
+        value=split.value.to(dtype=torch.float64),
+        gradient=split.gradient.to(dtype=torch.float64),
+        time_value=split.time_value.to(dtype=torch.float64),
+    )
+
+
+def _quantized_parameters_to_float64(
+    parameters: FrozenTERAParameters,
+) -> FrozenTERAParameters:
+    """Promote the exact learned float32 parameter values to float64."""
+
+    if parameters.lengthscale.dtype != torch.float32:
+        raise TypeError("the source parameters must contain a float32 lengthscale")
+    device = parameters.lengthscale.device
+    return replace(
+        parameters,
+        lengthscale=parameters.lengthscale.to(dtype=torch.float64),
+        outputscale=_float32_scalar_to_float64(parameters.outputscale, device=device),
+        sigma_f=_float32_scalar_to_float64(parameters.sigma_f, device=device),
+        sigma_g=_float32_scalar_to_float64(parameters.sigma_g, device=device),
     )
 
 
@@ -137,6 +176,108 @@ def _singular_spectra(
             }
         )
     return records
+
+
+def _neighbour_indices(
+    x_train: torch.Tensor,
+    x_eval: torch.Tensor,
+    lengthscale: torch.Tensor,
+    *,
+    m: int,
+) -> torch.Tensor:
+    """Use the exact scaled-Euclidean top-k rule used by released TERA."""
+
+    lengthscale = lengthscale.to(device=x_train.device, dtype=x_train.dtype)
+    if lengthscale.numel() == 1:
+        train_scaled = x_train / lengthscale.reshape(1, 1)
+        eval_scaled = x_eval / lengthscale.reshape(1, 1)
+    else:
+        train_scaled = x_train / lengthscale.reshape(1, -1)
+        eval_scaled = x_eval / lengthscale.reshape(1, -1)
+    return torch.topk(
+        torch.cdist(eval_scaled, train_scaled),
+        k=min(m, x_train.shape[0]),
+        largest=False,
+    ).indices
+
+
+def _support64_prediction_set(
+    train: TensorConfirmatorySplit,
+    evaluation: TensorConfirmatorySplit,
+    parameters: FrozenTERAParameters,
+    *,
+    m: int,
+) -> tuple[ScalarPrediction, list[dict[str, Any]]]:
+    """Run the independent dense oracle on released-TERA neighbourhoods."""
+
+    if train.X.dtype != torch.float64 or evaluation.X.dtype != torch.float64:
+        raise TypeError("support64 requires float32-quantized tensors promoted to float64")
+    if parameters.lengthscale.dtype != torch.float64:
+        raise TypeError("support64 parameters must be promoted to float64")
+    neighbours = _neighbour_indices(
+        train.X,
+        evaluation.X,
+        parameters.lengthscale,
+        m=m,
+    )
+    means: list[torch.Tensor] = []
+    variances: list[torch.Tensor] = []
+    records: list[dict[str, Any]] = []
+    for target_index, (target, indices) in enumerate(zip(evaluation.X, neighbours, strict=True)):
+        prediction = predict_local_dense_support(
+            train.X[indices],
+            train.value[indices],
+            train.gradient[indices],
+            target.unsqueeze(0),
+            lengthscale=parameters.lengthscale,
+            outputscale=parameters.outputscale,
+            value_noise_variance=parameters.sigma_f,
+            gradient_noise_variance=parameters.sigma_g,
+            kernel=parameters.kernel,
+            gradient_noise_model=parameters.gradient_noise_model,
+            function_jitter=1e-8,
+            support_coordinate_jitter=1e-8,
+        )
+        means.append(prediction.mean)
+        variances.append(prediction.latent_variance)
+        records.append(
+            {
+                "target_position": target_index,
+                "target_source_index": int(evaluation.source_indices[target_index].item()),
+                "neighbour_source_indices": (train.source_indices[indices].detach().cpu().tolist()),
+                "mean": float(prediction.mean.detach().cpu()),
+                "latent_variance": float(prediction.latent_variance.detach().cpu()),
+                "value_only_conditional_variance": float(
+                    prediction.value_only_conditional_variance.detach().cpu()
+                ),
+                "gradient_variance_reduction": float(
+                    prediction.gradient_variance_reduction.detach().cpu()
+                ),
+                "ambient_scaled_difference_support_projector": (
+                    prediction.support_basis @ prediction.support_basis.T
+                )
+                .detach()
+                .cpu()
+                .tolist(),
+                "q_coordinate_support_projector": (
+                    prediction.support_coordinates @ prediction.tera_to_support.T
+                )
+                .detach()
+                .cpu()
+                .tolist(),
+                "diagnostics": asdict(prediction.diagnostics),
+            }
+        )
+    mean = torch.stack(means)
+    latent_variance = torch.stack(variances)
+    return (
+        ScalarPrediction(
+            mean=mean,
+            latent_variance=latent_variance,
+            observation_variance=latent_variance + latent_variance.new_tensor(parameters.sigma_f),
+        ),
+        records,
+    )
 
 
 def _prediction_set(
@@ -246,20 +387,23 @@ def run_diagnostic(
         reduced_jitter=1e-8,
     )
 
-    train64 = prepared_split_to_tensors(selected, "train", dtype=torch.float64, device=device)
-    evaluation64 = prepared_split_to_tensors(
-        selected,
-        "validation",
-        dtype=torch.float64,
-        device=device,
-    )
-    parameters64 = replace(parameters32, lengthscale=parameters32.lengthscale.double())
+    # Do not revisit the raw source-float64 arrays here.  These tensors and
+    # parameters are the exact released float32 values promoted to float64.
+    train64 = _quantized_split_to_float64(train32)
+    evaluation64 = _quantized_split_to_float64(evaluation32)
+    parameters64 = _quantized_parameters_to_float64(parameters32)
     tera64, orbit64, tera64_jitters = _prediction_set(
         train64,
         evaluation64,
         parameters64,
         m=50,
         cg_tolerance=1e-10,
+    )
+    support64, support64_targets = _support64_prediction_set(
+        train64,
+        evaluation64,
+        parameters64,
+        m=50,
     )
 
     result = {
@@ -291,14 +435,26 @@ def run_diagnostic(
             "comparison_to_float32_tera": _comparison(tera32, orbit32_tight),
             "solver": _orbit_solver(orbit32_tight),
         },
-        "float64_prediction_only": {
-            "comparison": _comparison(tera64, orbit64),
+        "source_quantized_float64_prediction_only": {
+            "input_construction": (
+                "exact source-fp32-quantized train32/evaluation32/parameters32 values promoted "
+                "to float64; raw source float64 arrays are not reloaded"
+            ),
+            "released_tera64_to_orbit64": _comparison(tera64, orbit64),
+            "support64_to_released_tera64": _comparison(support64, tera64),
+            "support64_to_orbit64": _comparison(support64, orbit64),
+            "orbit32_to_support64": _comparison(
+                _cast_prediction(orbit32, torch.float64),
+                support64,
+            ),
             "released_tera_selected_q_coordinate_jitter": tera64_jitters,
             "scores": {
                 "TERA-50": _scalar_scores(evaluation64.value, tera64),
                 "ORBIT-50": _scalar_scores(evaluation64.value, orbit64),
+                "support64-50": _scalar_scores(evaluation64.value, support64),
             },
             "solver": _orbit_solver(orbit64),
+            "support64_per_target": support64_targets,
             "tera_float32_to_float64": _comparison(_cast_prediction(tera64, torch.float32), tera32),
             "orbit_float32_to_float64": _comparison(
                 _cast_prediction(orbit64, torch.float32),
@@ -315,7 +471,7 @@ def run_diagnostic(
             parameters32,
             m=50,
         ),
-        "float64_local_singular_spectra": _singular_spectra(
+        "source_quantized_float64_local_singular_spectra": _singular_spectra(
             train64.X,
             evaluation64.X,
             parameters64,
