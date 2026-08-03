@@ -40,9 +40,7 @@ def test_dependency_audit_accepts_satisfied_active_requirements() -> None:
     ]
 
 
-def test_dependency_audit_reports_missing_incompatible_and_conflicting_versions() -> (
-    None
-):
+def test_dependency_audit_reports_missing_incompatible_and_conflicting_versions() -> None:
     report = audit_distributions(
         [
             FakeDistribution("consumer", "1", ("missing>=1", "dependency>=2")),

@@ -27,9 +27,7 @@ def audit_distributions(
 ) -> dict[str, Any]:
     """Return installed packages and unsatisfied active requirements."""
 
-    available = list(
-        metadata.distributions() if distributions is None else distributions
-    )
+    available = list(metadata.distributions() if distributions is None else distributions)
     packages: list[dict[str, str]] = []
     installed: dict[str, list[str]] = {}
     issues: list[dict[str, str]] = []
@@ -39,9 +37,7 @@ def audit_distributions(
         raw_name = distribution.metadata.get("Name")
         raw_version = distribution.version
         if not isinstance(raw_name, str) or not raw_name.strip():
-            issues.append(
-                {"kind": "invalid_distribution", "detail": "missing package name"}
-            )
+            issues.append({"kind": "invalid_distribution", "detail": "missing package name"})
             continue
         name = canonicalize_name(raw_name)
         try:
@@ -86,9 +82,7 @@ def audit_distributions(
                 }
             )
             continue
-        if requirement.marker is not None and not requirement.marker.evaluate(
-            marker_environment
-        ):
+        if requirement.marker is not None and not requirement.marker.evaluate(marker_environment):
             continue
         dependency = canonicalize_name(requirement.name)
         versions = installed.get(dependency)
@@ -112,9 +106,7 @@ def audit_distributions(
                 }
             )
 
-    issues.sort(
-        key=lambda item: (item["kind"], item.get("package", ""), item["detail"])
-    )
+    issues.sort(key=lambda item: (item["kind"], item.get("package", ""), item["detail"]))
     return {
         "schema_version": 1,
         "status": "pass" if not issues else "fail",
@@ -147,8 +139,7 @@ def main(argv: list[str] | None = None) -> int:
         _write_atomic(args.report, encoded)
     if args.packages_out is not None:
         package_lines = "".join(
-            f"{package['name']}=={package['version']}\n"
-            for package in report["packages"]
+            f"{package['name']}=={package['version']}\n" for package in report["packages"]
         )
         _write_atomic(args.packages_out, package_lines)
     print(encoded, end="")
