@@ -47,6 +47,7 @@ _SELECTED_ENVIRONMENT = (
     "MKL_NUM_THREADS",
     "PYTHONHASHSEED",
     "F01_SLURM_EXCLUSIVE_VERIFIED",
+    "F01_SLURM_EXCLUSIVE_MODE",
 )
 
 
@@ -217,6 +218,7 @@ def main() -> None:
         "slurm_array_job_id": os.environ.get("SLURM_ARRAY_JOB_ID"),
         "slurm_array_task_id": os.environ.get("SLURM_ARRAY_TASK_ID"),
         "exclusive_node_verified": os.environ.get("F01_SLURM_EXCLUSIVE_VERIFIED") == "1",
+        "exclusive_node_verification_mode": os.environ.get("F01_SLURM_EXCLUSIVE_MODE"),
         "wall_time_is_inferential": False,
     }
 

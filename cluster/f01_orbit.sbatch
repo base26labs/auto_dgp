@@ -84,11 +84,65 @@ fi
 
 SLURM_JOB_RECORD=$(scontrol show job "${SLURM_JOB_ID}" -o)
 printf '%s\n' "${SLURM_JOB_RECORD}" > "${TASK_DIR}/slurm-job.txt"
-if [[ ${SLURM_JOB_RECORD} != *"OverSubscribe=EXCLUSIVE"* ]]; then
-    echo "refusing to record timing without an exclusive Slurm node" >&2
+
+NODE_NAME=${SLURMD_NODENAME:-}
+if [[ -z ${NODE_NAME} ]]; then
+    mapfile -t ALLOCATED_NODES < <(scontrol show hostnames "${SLURM_JOB_NODELIST}")
+    if (( ${#ALLOCATED_NODES[@]} != 1 )); then
+        echo "could not resolve exactly one allocated node" >&2
+        exit 2
+    fi
+    NODE_NAME=${ALLOCATED_NODES[0]}
+fi
+SLURM_NODE_RECORD=$(scontrol show node "${NODE_NAME}" -o)
+SLURM_NODE_JOBS=$(squeue --noheader --nodes "${NODE_NAME}" --states=RUNNING --format='%A' | sort -u)
+printf '%s\n' "${SLURM_NODE_RECORD}" > "${TASK_DIR}/slurm-node.txt"
+printf '%s\n' "${SLURM_NODE_JOBS}" > "${TASK_DIR}/slurm-jobs-on-node.txt"
+
+tres_value() {
+    local tres_list=$1
+    local key=$2
+    local entry
+    local entries
+    IFS=',' read -r -a entries <<< "${tres_list}"
+    for entry in "${entries[@]}"; do
+        if [[ ${entry} == "${key}="* ]]; then
+            printf '%s' "${entry#*=}"
+            return 0
+        fi
+    done
+    return 1
+}
+
+EXCLUSIVE_MODE=
+if [[ ${SLURM_JOB_RECORD} == *"OverSubscribe=EXCLUSIVE"* ]]; then
+    EXCLUSIVE_MODE=slurm_explicit
+elif [[ ${SLURM_JOB_RECORD} == *"OverSubscribe=NO"* ]]; then
+    JOB_ALLOC_TRES=
+    NODE_CONFIG_TRES=
+    if [[ ${SLURM_JOB_RECORD} =~ AllocTRES=([^[:space:]]+) ]]; then
+        JOB_ALLOC_TRES=${BASH_REMATCH[1]}
+    fi
+    if [[ ${SLURM_NODE_RECORD} =~ CfgTRES=([^[:space:]]+) ]]; then
+        NODE_CONFIG_TRES=${BASH_REMATCH[1]}
+    fi
+    JOB_CPU=$(tres_value "${JOB_ALLOC_TRES}" cpu || true)
+    NODE_CPU=$(tres_value "${NODE_CONFIG_TRES}" cpu || true)
+    JOB_GPU=$(tres_value "${JOB_ALLOC_TRES}" gres/gpu || true)
+    NODE_GPU=$(tres_value "${NODE_CONFIG_TRES}" gres/gpu || true)
+    CURRENT_JOB_FAMILY=${SLURM_ARRAY_JOB_ID:-${SLURM_JOB_ID}}
+    if [[ -n ${JOB_CPU} && ${JOB_CPU} == "${NODE_CPU}" \
+        && -n ${JOB_GPU} && ${JOB_GPU} == "${NODE_GPU}" \
+        && ${JOB_GPU} != 0 && ${SLURM_NODE_JOBS} == "${CURRENT_JOB_FAMILY}" ]]; then
+        EXCLUSIVE_MODE=slurm_no_oversubscribe_full_node_sole_job
+    fi
+fi
+if [[ -z ${EXCLUSIVE_MODE} ]]; then
+    echo "refusing to record timing without a verified exclusive full-node allocation" >&2
     exit 2
 fi
 export F01_SLURM_EXCLUSIVE_VERIFIED=1
+export F01_SLURM_EXCLUSIVE_MODE=${EXCLUSIVE_MODE}
 export F01_REQUIRE_SLURM=1
 export CUDA_DEVICE_ORDER=PCI_BUS_ID
 export OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK}
@@ -107,6 +161,7 @@ export PYTHONUNBUFFERED=1
     printf 'array_job_id=%s\n' "${ARRAY_JOB_ID}"
     printf 'array_task_id=%s\n' "${TASK_INDEX}"
     printf 'python=%s\n' "${PYTHON_BIN}"
+    printf 'exclusive_verification_mode=%s\n' "${EXCLUSIVE_MODE}"
 } > "${TASK_DIR}/provenance.env"
 printf '%s\n' "${GIT_STATUS}" > "${TASK_DIR}/git-status.txt"
 git submodule status --recursive > "${TASK_DIR}/git-submodules.txt"

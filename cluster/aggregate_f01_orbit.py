@@ -21,6 +21,10 @@ from typing import Any
 
 SCOPE = "mechanism experiment only; not a SOTA performance claim"
 _CONFIG_EXCEPTIONS = {"seed", "out"}
+_EXCLUSIVE_VERIFICATION_MODES = {
+    "slurm_explicit",
+    "slurm_no_oversubscribe_full_node_sole_job",
+}
 
 
 @dataclass
@@ -34,6 +38,7 @@ class _LoadedTask:
     array_job_id: str
     source_manifest_sha256: str
     packages_sha256: str
+    exclusive_verification_mode: str
     same_m_tolerance: float
     instances: list[dict[str, Any]]
 
@@ -139,6 +144,7 @@ def _load_task(path: Path, task_index: int, expected_seed: int) -> _LoadedTask:
             array_job_id="",
             source_manifest_sha256="",
             packages_sha256="",
+            exclusive_verification_mode="",
             same_m_tolerance=math.nan,
             instances=[],
         )
@@ -159,6 +165,7 @@ def _load_task(path: Path, task_index: int, expected_seed: int) -> _LoadedTask:
             array_job_id="",
             source_manifest_sha256="",
             packages_sha256="",
+            exclusive_verification_mode="",
             same_m_tolerance=math.nan,
             instances=[],
         )
@@ -277,6 +284,20 @@ def _load_task(path: Path, task_index: int, expected_seed: int) -> _LoadedTask:
 
     if cluster_provenance.get("exclusive_node_verified") is not True:
         errors.append("exclusive_node_verified is not true")
+    exclusive_verification_mode = cluster_provenance.get("exclusive_node_verification_mode")
+    if exclusive_verification_mode not in _EXCLUSIVE_VERIFICATION_MODES:
+        errors.append("exclusive node verification mode is missing or unsupported")
+        exclusive_verification_mode = ""
+    if provenance.get("exclusive_verification_mode") != exclusive_verification_mode:
+        errors.append("exclusive verification mode is not linked into task provenance")
+    selected_environment = runtime.get("selected_environment")
+    if not isinstance(selected_environment, dict):
+        errors.append("runtime selected_environment is missing or malformed")
+    elif (
+        selected_environment.get("F01_SLURM_EXCLUSIVE_VERIFIED") != "1"
+        or selected_environment.get("F01_SLURM_EXCLUSIVE_MODE") != exclusive_verification_mode
+    ):
+        errors.append("runtime environment does not verify the declared exclusive mode")
     if cluster_provenance.get("wall_time_is_inferential") is not False:
         errors.append("cluster wall_time_is_inferential is not false")
     if preregistration.get("wall_time_is_inferential") is not False:
@@ -465,6 +486,7 @@ def _load_task(path: Path, task_index: int, expected_seed: int) -> _LoadedTask:
             "slurm_array_job_id": array_job_id,
             "source_manifest_sha256": source_manifest_sha256,
             "packages_sha256": runtime_package_hash,
+            "exclusive_verification_mode": exclusive_verification_mode,
             "normalized_config_sha256": _sha256_json(normalized_config),
         }
     )
@@ -478,6 +500,7 @@ def _load_task(path: Path, task_index: int, expected_seed: int) -> _LoadedTask:
         array_job_id=array_job_id,
         source_manifest_sha256=source_manifest_sha256,
         packages_sha256=runtime_package_hash,
+        exclusive_verification_mode=exclusive_verification_mode,
         same_m_tolerance=tolerance,
         instances=instances,
     )
@@ -494,6 +517,7 @@ def _empty_loaded(record: dict[str, Any]) -> _LoadedTask:
         array_job_id="",
         source_manifest_sha256="",
         packages_sha256="",
+        exclusive_verification_mode="",
         same_m_tolerance=math.nan,
         instances=[],
     )
@@ -615,6 +639,9 @@ def aggregate(
         "source_manifest": {task.source_manifest_sha256 for task in structurally_valid},
         "config": {_sha256_json(task.normalized_config) for task in structurally_valid},
         "packages": {task.packages_sha256 for task in structurally_valid},
+        "exclusive_verification_mode": {
+            task.exclusive_verification_mode for task in structurally_valid
+        },
         "same_m_tolerance": {task.same_m_tolerance for task in structurally_valid},
     }
     same_dimensions = {
@@ -814,6 +841,7 @@ def aggregate(
         "same_source_manifest": same_dimensions["source_manifest"],
         "same_config_except_seed_and_output": same_dimensions["config"],
         "same_package_manifest": same_dimensions["packages"],
+        "same_exclusive_verification_mode": same_dimensions["exclusive_verification_mode"],
         "same_equivalence_tolerance": same_dimensions["same_m_tolerance"],
         "commit": structurally_valid[0].commit if same_dimensions["commit"] else None,
         "tree": structurally_valid[0].tree if same_dimensions["tree"] else None,
@@ -837,6 +865,11 @@ def aggregate(
         ),
         "packages_sha256": (
             structurally_valid[0].packages_sha256 if same_dimensions["packages"] else None
+        ),
+        "exclusive_verification_mode": (
+            structurally_valid[0].exclusive_verification_mode
+            if same_dimensions["exclusive_verification_mode"]
+            else None
         ),
     }
 

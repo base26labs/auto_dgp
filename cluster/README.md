@@ -97,9 +97,13 @@ result, manifests, hashes, and runner log.  The artifacts include:
 - `gpu.csv`, topology and before/after compute-process snapshots;
 - source, package/runtime, dataset, and final artifact SHA-256 records.
 
-The batch job refuses a dirty tree by default and verifies that Slurm reports
-`OverSubscribe=EXCLUSIVE`.  `F01_ALLOW_DIRTY=1` exists only for diagnostics;
-results from that mode should not enter the research log.
+The batch job refuses a dirty tree by default.  Slurm installations encode
+`--exclusive` differently: the harness accepts either
+`OverSubscribe=EXCLUSIVE`, or `OverSubscribe=NO` only when the job's allocated
+CPU/GPU TRES equal the node's configured CPU/GPU TRES and the current job is
+the sole running allocation on that node.  It records the job record, node
+record, node job list, and verification mode.  `F01_ALLOW_DIRTY=1` exists only
+for diagnostics; results from that mode should not enter the research log.
 
 After every expected task has terminated, aggregate by declaring the exact seed
 array rather than globbing only successful directories:

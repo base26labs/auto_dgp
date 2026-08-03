@@ -44,6 +44,7 @@ def _write_task(
     submodules: str = " cccccccc gp/tera/vendor (heads/main)",
     config_override: dict | None = None,
     exclusive: bool = True,
+    exclusive_mode: str = "slurm_no_oversubscribe_full_node_sole_job",
     cluster_wall_inferential: bool = False,
     prereg_wall_inferential: bool = False,
     dirty: bool = False,
@@ -138,7 +139,10 @@ def _write_task(
     runtime = {
         "packages": packages,
         "packages_sha256": _canonical_hash(packages),
-        "selected_environment": {"F01_SLURM_EXCLUSIVE_VERIFIED": "1"},
+        "selected_environment": {
+            "F01_SLURM_EXCLUSIVE_VERIFIED": "1",
+            "F01_SLURM_EXCLUSIVE_MODE": exclusive_mode,
+        },
     }
     _write_json(task_dir / "datasets.json", datasets)
     _write_json(task_dir / "runtime.json", runtime)
@@ -163,6 +167,7 @@ def _write_task(
             "slurm_array_job_id": "12345",
             "slurm_array_task_id": str(task_index),
             "exclusive_node_verified": exclusive,
+            "exclusive_node_verification_mode": exclusive_mode,
             "wall_time_is_inferential": cluster_wall_inferential,
         },
     }
@@ -181,6 +186,7 @@ def _write_task(
                 f"seed={seed}",
                 "array_job_id=12345",
                 f"array_task_id={task_index}",
+                f"exclusive_verification_mode={exclusive_mode}",
             ]
         )
         + "\n"
@@ -317,6 +323,7 @@ def test_h2_rejects_full_training_set_candidate_as_trivial(tmp_path: Path) -> No
         ("submodule", {"submodules": " ffffffff gp/tera/vendor (heads/other)"}),
         ("config", {"config_override": {"kernel": "rbf"}}),
         ("exclusive", {"exclusive": False}),
+        ("exclusive mode", {"exclusive_mode": "unverified"}),
         ("cluster timing", {"cluster_wall_inferential": True}),
         ("experiment timing", {"prereg_wall_inferential": True}),
         ("dirty", {"dirty": True}),
