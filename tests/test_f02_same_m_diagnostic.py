@@ -10,12 +10,16 @@ from experiments.f02_internal_models import (
     FrozenTERAParameters,
     ScalarPrediction,
     TensorConfirmatorySplit,
+    build_released_tera_predictor,
 )
 from experiments.f02_same_m_diagnostic import (
     DIAGNOSTIC_SCHEMA_VERSION,
+    _cross_dtype_neighbour_identity,
+    _fixed_rank_geometry_records,
     _neighbour_indices,
     _quantized_parameters_to_float64,
     _quantized_split_to_float64,
+    _released_tera_fixed_prediction_set,
     _scalar_scores,
     _singular_spectra,
     _support64_prediction_set,
@@ -118,7 +122,7 @@ def test_float64_diagnostic_inputs_only_promote_exact_float32_values() -> None:
     split64 = _quantized_split_to_float64(split32)
     parameters64 = _quantized_parameters_to_float64(parameters32)
 
-    assert DIAGNOSTIC_SCHEMA_VERSION == "f02_same_m_diagnostic_v2"
+    assert DIAGNOSTIC_SCHEMA_VERSION == "f02_same_m_diagnostic_v3"
     for source, promoted in (
         (split32.X, split64.X),
         (split32.value, split64.value),
@@ -140,6 +144,179 @@ def test_float64_diagnostic_inputs_only_promote_exact_float32_values() -> None:
         expected = float(torch.tensor(getattr(parameters32, name), dtype=torch.float32))
         assert getattr(parameters64, name) == expected
     assert split64.X[0, 0] != raw_x[0, 0]
+
+
+def test_near_ties_prove_native_cross_dtype_knn_is_not_a_comparison_contract() -> None:
+    dimension = 12
+    generator = torch.Generator().manual_seed(10_000 * dimension)
+    target = torch.rand(1, dimension, generator=generator, dtype=torch.float32)
+    directions = torch.randn(80, dimension, generator=generator, dtype=torch.float32)
+    directions = directions / torch.linalg.vector_norm(directions, dim=1, keepdim=True)
+    x_train = target + directions
+    train32 = _split(
+        "train",
+        x_train,
+        torch.zeros(80, dtype=torch.float32),
+        torch.zeros(80, dimension, dtype=torch.float32),
+        source_offset=100,
+    )
+    evaluation32 = _split(
+        "validation",
+        target,
+        torch.zeros(1, dtype=torch.float32),
+        torch.zeros(1, dimension, dtype=torch.float32),
+        source_offset=900,
+    )
+    parameters32 = FrozenTERAParameters(
+        lengthscale=torch.ones(1, dtype=torch.float32),
+        outputscale=1.0,
+        sigma_f=0.01,
+        sigma_g=0.01,
+        kernel="rbf",
+    )
+    train64 = _quantized_split_to_float64(train32)
+    evaluation64 = _quantized_split_to_float64(evaluation32)
+    parameters64 = _quantized_parameters_to_float64(parameters32)
+
+    identity = _cross_dtype_neighbour_identity(
+        train32,
+        evaluation32,
+        parameters32,
+        train64,
+        evaluation64,
+        parameters64,
+        m=20,
+    )
+
+    assert identity["native_recomputation_all_targets_same_order"] is False
+    assert identity["native_recomputation_all_targets_same_set"] is False
+    assert identity["fixed_comparisons_use_canonical_float32_indices"] is True
+    canonical = _neighbour_indices(
+        train32.X,
+        evaluation32.X,
+        parameters32.lengthscale,
+        m=20,
+    )
+    assert identity["canonical_neighbour_source_indices"] == (
+        train32.source_indices[canonical].tolist()
+    )
+
+
+def test_fixed_rank_geometry_uses_source_epsilon_without_relabelling_weak_modes_exact() -> None:
+    singular_values = torch.tensor(
+        [1.0, 0.9, 0.8, 0.7, 0.6, 0.5, 1e-7, 9e-8, 8e-8, 7e-8, 6e-8, 5e-8],
+        dtype=torch.float32,
+    )
+    x_train = torch.diag(singular_values)
+    train32 = _split(
+        "train",
+        x_train,
+        torch.zeros(12, dtype=torch.float32),
+        torch.zeros(12, 12, dtype=torch.float32),
+    )
+    evaluation32 = _split(
+        "validation",
+        torch.zeros(1, 12, dtype=torch.float32),
+        torch.zeros(1, dtype=torch.float32),
+        torch.zeros(1, 12, dtype=torch.float32),
+        source_offset=100,
+    )
+    parameters32 = FrozenTERAParameters(
+        lengthscale=torch.ones(1, dtype=torch.float32),
+        outputscale=1.0,
+        sigma_f=0.01,
+        sigma_g=0.01,
+        kernel="rbf",
+    )
+    train64 = _quantized_split_to_float64(train32)
+    evaluation64 = _quantized_split_to_float64(evaluation32)
+    parameters64 = _quantized_parameters_to_float64(parameters32)
+    neighbours = torch.arange(12, dtype=torch.long).reshape(1, 12)
+    rank_epsilon = float(torch.finfo(torch.float32).eps)
+
+    record32 = _fixed_rank_geometry_records(
+        train32,
+        evaluation32,
+        parameters32,
+        m=12,
+        neighbour_indices=neighbours,
+        rank_epsilon=rank_epsilon,
+    )[0]
+    record64 = _fixed_rank_geometry_records(
+        train64,
+        evaluation64,
+        parameters64,
+        m=12,
+        neighbour_indices=neighbours,
+        rank_epsilon=rank_epsilon,
+    )[0]
+
+    assert record32["operational_retained_rank"] == 6
+    assert record64["operational_retained_rank"] == 6
+    assert record32["native_compute_retained_rank"] == 6
+    assert record64["native_compute_retained_rank"] == 12
+    assert record32["discarded_modes_are_unresolvable_at_native_cutoff"] is True
+    assert record64["discarded_modes_are_unresolvable_at_native_cutoff"] is False
+
+
+def test_released_tera_fixed_path_calls_pinned_one_target_api_with_caller_rows() -> None:
+    from gp_sim_kl.utils import scale_inputs
+
+    generator = torch.Generator().manual_seed(119)
+    train = _split(
+        "train",
+        torch.randn(6, 4, generator=generator, dtype=torch.float64),
+        torch.randn(6, generator=generator, dtype=torch.float64),
+        torch.randn(6, 4, generator=generator, dtype=torch.float64),
+        source_offset=100,
+    )
+    evaluation = _split(
+        "validation",
+        torch.randn(2, 4, generator=generator, dtype=torch.float64),
+        torch.zeros(2, dtype=torch.float64),
+        torch.zeros(2, 4, dtype=torch.float64),
+        source_offset=900,
+    )
+    parameters = FrozenTERAParameters(
+        lengthscale=torch.tensor([0.8], dtype=torch.float64),
+        outputscale=1.2,
+        sigma_f=0.03,
+        sigma_g=0.04,
+        kernel="rbf",
+    )
+    fixed_neighbours = torch.tensor([[5, 3, 1], [0, 4, 2]], dtype=torch.long)
+
+    prediction, q_jitters, function_jitters = _released_tera_fixed_prediction_set(
+        train,
+        evaluation,
+        parameters,
+        m=3,
+        neighbour_indices=fixed_neighbours,
+    )
+    predictor = build_released_tera_predictor(train, parameters, m=3)
+    evaluation_scaled = scale_inputs(evaluation.X, parameters.lengthscale)
+    with torch.no_grad():
+        expected = [
+            predictor._predict_one(
+                x_eval=target.unsqueeze(0),
+                x_eval_scaled=target_scaled.unsqueeze(0),
+                idx=indices,
+            )
+            for target, target_scaled, indices in zip(
+                evaluation.X,
+                evaluation_scaled,
+                fixed_neighbours,
+                strict=True,
+            )
+        ]
+
+    torch.testing.assert_close(prediction.mean, torch.stack([item[0] for item in expected]))
+    torch.testing.assert_close(
+        prediction.latent_variance,
+        torch.stack([item[1] for item in expected]),
+    )
+    assert len(q_jitters) == evaluation.X.shape[0]
+    assert len(function_jitters) == evaluation.X.shape[0]
 
 
 def test_support64_prediction_set_records_per_target_numerical_evidence() -> None:
@@ -172,18 +349,36 @@ def test_support64_prediction_set_records_per_target_numerical_evidence() -> Non
     evaluation64 = _quantized_split_to_float64(evaluation32)
     parameters64 = _quantized_parameters_to_float64(parameters32)
 
+    expected_neighbours = _neighbour_indices(
+        train32.X,
+        evaluation32.X,
+        parameters32.lengthscale,
+        m=4,
+    )
     prediction, records = _support64_prediction_set(
         train64,
         evaluation64,
         parameters64,
         m=4,
+        neighbour_indices=expected_neighbours,
     )
-
-    expected_neighbours = _neighbour_indices(
-        train64.X,
-        evaluation64.X,
-        parameters64.lengthscale,
+    neighbour_identity = _cross_dtype_neighbour_identity(
+        train32,
+        evaluation32,
+        parameters32,
+        train64,
+        evaluation64,
+        parameters64,
         m=4,
+    )
+    assert neighbour_identity["native_recomputation_all_targets_same_order"] is True
+    assert neighbour_identity["native_recomputation_all_targets_same_set"] is True
+    assert neighbour_identity["fixed_comparisons_use_canonical_float32_indices"] is True
+    assert neighbour_identity["canonical_neighbour_source_indices"] == (
+        train32.source_indices[expected_neighbours].tolist()
+    )
+    assert neighbour_identity["native_source_quantized_float64_neighbour_source_indices"] == (
+        train64.source_indices[expected_neighbours].tolist()
     )
     assert prediction.mean.shape == (2,)
     assert prediction.latent_variance.shape == (2,)

@@ -162,6 +162,7 @@ def predict_local_value(
     gradient_noise_model: str = "iid",
     rank: int | None = None,
     relative_rank_tolerance: float | None = None,
+    rank_epsilon: float | torch.Tensor | None = None,
     cg_tolerance: float = 1e-6,
     cg_max_iterations: int | None = None,
     use_preconditioner: bool = True,
@@ -191,6 +192,7 @@ def predict_local_value(
         scaled_differences,
         rank=rank,
         relative_tolerance=relative_rank_tolerance,
+        rank_epsilon=rank_epsilon,
     )
     # Kernel coefficients must use the full geometry even in the separately
     # labelled approximate-rank mode.  Reconstructing this Gram matrix from
@@ -350,13 +352,22 @@ def predict_marginal_values(
     gradient_noise_model: str = "iid",
     rank: int | None = None,
     relative_rank_tolerance: float | None = None,
+    neighbour_indices: torch.Tensor | None = None,
+    rank_epsilon: float | torch.Tensor | None = None,
     cg_tolerance: float = 1e-6,
     cg_max_iterations: int | None = None,
     use_preconditioner: bool = True,
     function_jitter: float = 1e-8,
     reduced_jitter: float = 1e-8,
 ) -> MarginalPredictions:
-    """Predict independent local marginals using nearest neighbours."""
+    """Predict independent local marginals using nearest neighbours.
+
+    ``neighbour_indices`` and ``rank_epsilon`` expose a fail-closed path for
+    numerical comparisons that must hold neighbour identity and the SVD rank
+    rule fixed across dtypes.  When omitted, the historical behaviour is
+    unchanged: neighbours are selected in the input dtype and the rank cutoff
+    uses that dtype's machine epsilon.
+    """
 
     if m <= 0:
         raise ValueError("m must be positive")
@@ -372,11 +383,32 @@ def predict_marginal_values(
         train_scaled = x_train / lengthscale.reshape(1, -1)
         eval_scaled = x_eval / lengthscale.reshape(1, -1)
     count = min(m, x_train.shape[0])
-    neighbours = torch.topk(
-        torch.cdist(eval_scaled, train_scaled),
-        k=count,
-        largest=False,
-    ).indices
+    if neighbour_indices is None:
+        neighbours = torch.topk(
+            torch.cdist(eval_scaled, train_scaled),
+            k=count,
+            largest=False,
+        ).indices
+    else:
+        if not isinstance(neighbour_indices, torch.Tensor):
+            raise TypeError("neighbour_indices must be a torch.Tensor")
+        if neighbour_indices.dtype != torch.long:
+            raise TypeError("neighbour_indices must have dtype torch.long")
+        if neighbour_indices.device != x_train.device:
+            raise ValueError("neighbour_indices must be on the training-data device")
+        expected_shape = (x_eval.shape[0], count)
+        if neighbour_indices.shape != expected_shape:
+            raise ValueError(f"neighbour_indices must have shape {expected_shape}")
+        if neighbour_indices.numel() > 0:
+            if bool((neighbour_indices < 0).any().item()) or bool(
+                (neighbour_indices >= x_train.shape[0]).any().item()
+            ):
+                raise ValueError("neighbour_indices contains an out-of-range row")
+            if count > 1:
+                ordered = torch.sort(neighbour_indices, dim=1).values
+                if bool((ordered[:, 1:] == ordered[:, :-1]).any().item()):
+                    raise ValueError("each neighbour_indices row must contain unique rows")
+        neighbours = neighbour_indices
 
     predictions = []
     for target, indices in zip(x_eval, neighbours, strict=True):
@@ -394,6 +426,7 @@ def predict_marginal_values(
                 gradient_noise_model=gradient_noise_model,
                 rank=rank,
                 relative_rank_tolerance=relative_rank_tolerance,
+                rank_epsilon=rank_epsilon,
                 cg_tolerance=cg_tolerance,
                 cg_max_iterations=cg_max_iterations,
                 use_preconditioner=use_preconditioner,

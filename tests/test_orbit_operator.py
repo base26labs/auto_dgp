@@ -11,7 +11,12 @@ from gp.orbit import (
     compute_posterior_certificate,
     solve_reduced_cg,
 )
-from gp.orbit.predictor import _cholesky_with_jitter, _projected_noise_gram, predict_local_value
+from gp.orbit.predictor import (
+    _cholesky_with_jitter,
+    _projected_noise_gram,
+    predict_local_value,
+    predict_marginal_values,
+)
 
 
 def _fixture(m: int = 5, d: int = 8, *, seed: int = 2):
@@ -277,6 +282,106 @@ def test_direct_svd_geometry_retains_resolvable_small_modes(dtype, small_singula
         geometry.coordinates @ geometry.coordinates.T,
         differences.T @ differences,
     )
+
+
+def test_external_rank_epsilon_selects_support_without_claiming_native_exactness():
+    singular_values = torch.tensor(
+        [1.0, 0.9, 0.8, 0.7, 0.6, 0.5, 1e-7, 9e-8, 8e-8, 7e-8, 6e-8, 5e-8],
+        dtype=torch.float32,
+    ).to(torch.float64)
+    differences = torch.diag(singular_values)
+
+    native = build_local_geometry_from_differences(differences)
+    fixed_source = build_local_geometry_from_differences(
+        differences,
+        rank_epsilon=torch.finfo(torch.float32).eps,
+    )
+
+    assert native.rank == 12
+    assert native.is_exact
+    assert fixed_source.rank == 6
+    assert not fixed_source.is_exact
+    assert float(fixed_source.discarded_eigenvalue_sum) > 0.0
+
+
+@pytest.mark.parametrize("rank_epsilon", [0.0, -1e-6, 1.0, float("nan")])
+def test_external_rank_epsilon_rejects_invalid_values(rank_epsilon):
+    with pytest.raises(ValueError, match="rank_epsilon"):
+        build_local_geometry_from_differences(
+            torch.eye(2, dtype=torch.float64),
+            rank_epsilon=rank_epsilon,
+        )
+
+
+def test_marginal_prediction_uses_caller_fixed_neighbour_rows_and_order():
+    generator = torch.Generator().manual_seed(805)
+    x_train = torch.randn(6, 4, generator=generator, dtype=torch.float64)
+    values = torch.randn(6, generator=generator, dtype=torch.float64)
+    gradients = torch.randn(6, 4, generator=generator, dtype=torch.float64)
+    x_eval = torch.randn(2, 4, generator=generator, dtype=torch.float64)
+    neighbours = torch.tensor([[5, 3, 1], [0, 4, 2]], dtype=torch.long)
+    kwargs = {
+        "lengthscale": torch.tensor([0.85], dtype=torch.float64),
+        "outputscale": 1.3,
+        "value_noise_variance": 0.04,
+        "gradient_noise_variance": 0.02,
+        "kernel": "rbf",
+        "cg_tolerance": 1e-12,
+        "cg_max_iterations": 200,
+        "use_preconditioner": False,
+    }
+
+    batch = predict_marginal_values(
+        x_train,
+        values,
+        gradients,
+        x_eval,
+        m=3,
+        neighbour_indices=neighbours,
+        **kwargs,
+    )
+    local = [
+        predict_local_value(
+            x_train[row],
+            values[row],
+            gradients[row],
+            target.unsqueeze(0),
+            **kwargs,
+        )
+        for target, row in zip(x_eval, neighbours, strict=True)
+    ]
+
+    torch.testing.assert_close(batch.mean, torch.stack([item.mean for item in local]))
+    torch.testing.assert_close(batch.variance, torch.stack([item.variance for item in local]))
+    assert batch.ranks.tolist() == [item.rank for item in local]
+
+
+@pytest.mark.parametrize(
+    ("neighbours", "error", "message"),
+    [
+        (torch.tensor([[0, 1]], dtype=torch.long), ValueError, "shape"),
+        (torch.tensor([[0, 0], [1, 2]], dtype=torch.long), ValueError, "unique"),
+        (torch.tensor([[0, 6], [1, 2]], dtype=torch.long), ValueError, "out-of-range"),
+        (torch.tensor([[0, 1], [1, 2]], dtype=torch.int32), TypeError, "torch.long"),
+    ],
+)
+def test_marginal_prediction_rejects_invalid_fixed_neighbours(neighbours, error, message):
+    x_train = torch.arange(24, dtype=torch.float64).reshape(6, 4)
+    x_eval = torch.zeros(2, 4, dtype=torch.float64)
+    with pytest.raises(error, match=message):
+        predict_marginal_values(
+            x_train,
+            torch.zeros(6, dtype=torch.float64),
+            torch.zeros(6, 4, dtype=torch.float64),
+            x_eval,
+            m=2,
+            neighbour_indices=neighbours,
+            lengthscale=torch.ones(1, dtype=torch.float64),
+            outputscale=1.0,
+            value_noise_variance=0.1,
+            gradient_noise_variance=0.1,
+            kernel="rbf",
+        )
 
 
 def test_residual_certificate_bounds_scalar_posterior_error():

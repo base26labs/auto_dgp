@@ -132,6 +132,7 @@ def build_local_geometry_from_differences(
     *,
     rank: int | None = None,
     relative_tolerance: float | None = None,
+    rank_epsilon: float | torch.Tensor | None = None,
 ) -> LocalGeometry:
     """Build local coordinates from a stable thin SVD of scaled differences.
 
@@ -150,13 +151,29 @@ def build_local_geometry_from_differences(
         raise ValueError("rank must lie between 1 and min(d, m)")
     if relative_tolerance is not None and not 0.0 <= relative_tolerance < 1.0:
         raise ValueError("relative_tolerance must lie in [0, 1)")
+    if rank_epsilon is None:
+        epsilon = differences.new_tensor(torch.finfo(differences.dtype).eps)
+    else:
+        epsilon = torch.as_tensor(
+            rank_epsilon,
+            device=differences.device,
+            dtype=differences.dtype,
+        )
+        if epsilon.numel() != 1 or not bool(torch.isfinite(epsilon).item()):
+            raise ValueError("rank_epsilon must be a finite scalar")
+        epsilon = epsilon.reshape(())
+        if not 0.0 < float(epsilon) < 1.0:
+            raise ValueError("rank_epsilon must lie in (0, 1)")
 
     _, singular_values, right_transpose = torch.linalg.svd(
         differences,
         full_matrices=False,
     )
     largest = singular_values[0]
-    numerical_tolerance = largest * max(differences.shape) * torch.finfo(differences.dtype).eps
+    numerical_tolerance = largest * max(differences.shape) * epsilon
+    native_numerical_tolerance = (
+        largest * max(differences.shape) * torch.finfo(differences.dtype).eps
+    )
     if rank is not None:
         keep = torch.arange(singular_values.numel(), device=differences.device) < rank
         keep = keep & (singular_values > numerical_tolerance)
@@ -167,7 +184,10 @@ def build_local_geometry_from_differences(
         keep = singular_values > threshold
 
     discarded = (singular_values[~keep] ** 2).sum()
-    is_exact = not bool((singular_values[~keep] > numerical_tolerance).any().item())
+    # An externally fixed/coarser operational cutoff must not relabel modes
+    # resolvable in the compute dtype as exact algebraic zeros.  Certificates
+    # therefore use the native cutoff even when selection uses rank_epsilon.
+    is_exact = not bool((singular_values[~keep] > native_numerical_tolerance).any().item())
     m = differences.shape[1]
     if not bool(keep.any().item()):
         empty = differences.new_empty((m, 0))

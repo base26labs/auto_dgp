@@ -47,9 +47,10 @@ aggregate SHA-256 is `fd4634f8ca84aa7e0235142118f617678dd498271e38f60b3731e37cc6
 `50c0a5d0b9e9ec7610c6f0718a951c956bf7288ae885ae963348490a50765d95`. On the same `D=12`,
 `m=50`, seed-11 task:
 
-- the default ORBIT32 solves converged for all 20 targets, retained an exact basis of rank `6`, and
-  had maximum freshly recomputed relative residual `9.509325536782853e-06`, yet the TERA32/ORBIT32
-  differences reproduced job 2810520;
+- the default ORBIT32 solves converged for all 20 targets, retained rank `6`, and reported its basis
+  complete under the then-used native-float32 numerical cutoff; this was a numerical designation,
+  not a claim of algebraic exactness. Its maximum freshly recomputed relative residual was
+  `9.509325536782853e-06`, yet the TERA32/ORBIT32 differences reproduced job 2810520;
 - tightening the requested ORBIT32 CG tolerance to `1e-8` reached the 300-iteration cap without
   convergence, while the discrepancies remained essentially unchanged: maximum absolute mean
   `0.1807389259338379` and latent variance `0.0009041596204042435`;

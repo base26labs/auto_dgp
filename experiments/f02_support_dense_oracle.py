@@ -461,9 +461,17 @@ def predict_local_dense_support(
             diagnostics=diagnostics,
         )
 
-    gram = scaled_differences.T @ scaled_differences
-    diagonal = torch.diagonal(gram)
-    pair_distance2 = (diagonal[:, None] + diagonal[None, :] - 2.0 * gram).clamp_min(0.0)
+    # Construct neighbour-pair distances directly from the quantized64
+    # coordinates.  ORBIT reconstructs these distances through the target
+    # Gram matrix; keeping this dense oracle on a distinct arithmetic path
+    # avoids a shared cancellation bug in the reference comparison.
+    pair_differences = x64[:, None, :] - x64[None, :, :]
+    if lengthscale64.numel() == 1:
+        pair_differences = pair_differences / lengthscale64.reshape(1, 1, 1)
+    else:
+        pair_differences = pair_differences / lengthscale64.reshape(1, 1, -1)
+    pair_distance2 = (pair_differences * pair_differences).sum(dim=-1)
+    diagonal = (scaled_differences * scaled_differences).sum(dim=0)
     pair_alpha, pair_beta = _gradient_scalars(
         pair_distance2,
         outputscale64,
