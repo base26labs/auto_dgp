@@ -100,11 +100,7 @@ def _singular_spectra(
         else:
             differences = differences / lengthscale.reshape(-1, 1)
         singular_values = torch.linalg.svdvals(differences)
-        threshold = (
-            singular_values[0]
-            * max(differences.shape)
-            * torch.finfo(differences.dtype).eps
-        )
+        threshold = singular_values[0] * max(differences.shape) * torch.finfo(differences.dtype).eps
         positive = singular_values > 0.0
         condition_number = math.inf
         if bool(positive.any().item()):

@@ -121,8 +121,7 @@ def test_metric_order_is_trajectory_then_seed_then_replica() -> None:
 def test_optimizer_seeds_are_averaged_before_resource_bootstrap() -> None:
     metrics, resources = _records(candidates=(75,))
     changed = [
-        replace(record, counted_flops=0 if record.seed == 11 else 100)
-        for record in resources
+        replace(record, counted_flops=0 if record.seed == 11 else 100) for record in resources
     ]
     summary = evaluate_dimension_candidates(
         12,
@@ -167,8 +166,7 @@ def test_each_resource_gate_fails_closed(field: str, value: object, reason: str)
 def test_exact_nll_tie_prefers_smaller_m() -> None:
     metrics, resources = _records()
     metrics = [
-        replace(record, standardized_mse=1.0, latent_gaussian_nll=0.25)
-        for record in metrics
+        replace(record, standardized_mse=1.0, latent_gaussian_nll=0.25) for record in metrics
     ]
     selected = select_dimension_neighbor_count(
         12,
