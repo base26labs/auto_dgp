@@ -111,12 +111,8 @@ def test_constant_paired_effect_has_exact_hierarchical_interval():
     for replica in (101, 102):
         for dimension in (12, 24):
             for trajectory in (3, 9):
-                reference.append(
-                    _record(replica, dimension, trajectory, rmse=2.0, nll=0.5)
-                )
-                candidate.append(
-                    _record(replica, dimension, trajectory, rmse=1.0, nll=0.25)
-                )
+                reference.append(_record(replica, dimension, trajectory, rmse=2.0, nll=0.5))
+                candidate.append(_record(replica, dimension, trajectory, rmse=1.0, nll=0.25))
 
     result = paired_hierarchical_bootstrap(reference, candidate, draws=128)
     assert DEFAULT_BOOTSTRAP_DRAWS == 10_000
@@ -242,9 +238,7 @@ def test_rmse_transformation_occurs_after_trajectory_mse_within_each_dimension()
 
     reference_rmse = (math.sqrt((1.0**2 + 3.0**2) / 2.0) + 4.0) / 2.0
     candidate_rmse = (2.0 + 5.0) / 2.0
-    assert result.rmse_absolute_change.estimate == pytest.approx(
-        candidate_rmse - reference_rmse
-    )
+    assert result.rmse_absolute_change.estimate == pytest.approx(candidate_rmse - reference_rmse)
     assert result.rmse_relative_change.estimate == pytest.approx(
         candidate_rmse / reference_rmse - 1.0
     )

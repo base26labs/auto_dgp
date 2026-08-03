@@ -152,9 +152,7 @@ def test_preparation_never_filters_rows_by_held_out_labels(loader_dataset):
             changed.split(name).source_indices,
             original.split(name).source_indices,
         )
-    prepared_rows = sum(
-        changed.split(name).E.size for name in ("train", "validation", "test")
-    )
+    prepared_rows = sum(changed.split(name).E.size for name in ("train", "validation", "test"))
     assert prepared_rows == E.size
     assert np.all(changed.validation.E > 1.0e6)
     assert np.all(changed.test.F < -1.0e6)

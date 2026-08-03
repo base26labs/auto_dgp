@@ -51,9 +51,7 @@ def _write_task_artifacts(
     task_dir = run_root / f"task-{task.task_index}"
     task_dir.mkdir(parents=True)
     (task_dir / "exit-code.txt").write_text("0\n")
-    (task_dir / "result.json").write_text(
-        json.dumps(result, indent=2, sort_keys=True) + "\n"
-    )
+    (task_dir / "result.json").write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
     (task_dir / "provenance.env").write_text(
         "\n".join(
             (
@@ -71,9 +69,7 @@ def _write_task_artifacts(
         )
         + "\n"
     )
-    (task_dir / "git-submodules.txt").write_text(
-        f" {'3' * 40} third_party/tera (heads/main)\n"
-    )
+    (task_dir / "git-submodules.txt").write_text(f" {'3' * 40} third_party/tera (heads/main)\n")
     (task_dir / "source-files.sha256").write_text(_source_manifest())
     (task_dir / "artifacts.sha256").write_text(
         f"{_sha256(task_dir / 'result.json')}  {task_dir / 'result.json'}\n"
@@ -201,9 +197,7 @@ def test_aggregate_rejects_mismatched_recorded_bundle_hashes(tmp_path: Path) -> 
     data_dir = tmp_path / "data"
     task = generation_tasks(replicas, particle_counts, n_dims=1)[0]
     result = _generate_result(task, data_dir)
-    result["artifacts"]["file_sha256"][next(iter(result["artifacts"]["file_sha256"]))] = (
-        "0" * 64
-    )
+    result["artifacts"]["file_sha256"][next(iter(result["artifacts"]["file_sha256"]))] = "0" * 64
     _write_task_artifacts(
         run_root,
         task,
@@ -286,10 +280,7 @@ def test_aggregate_requires_common_commit_provenance(tmp_path: Path) -> None:
         task["status"] == "valid" and not task["eligible_for_catalog"]
         for task in report["task_accounting"]["tasks"]
     )
-    assert all(
-        "cross-task" in task["errors"][0]
-        for task in report["task_accounting"]["tasks"]
-    )
+    assert all("cross-task" in task["errors"][0] for task in report["task_accounting"]["tasks"])
 
 
 def test_aggregate_rejects_duplicate_semantic_dataset_content(tmp_path: Path) -> None:
@@ -341,7 +332,6 @@ def test_aggregate_rejects_duplicate_semantic_dataset_content(tmp_path: Path) ->
     assert len(report["independence"]["duplicate_dataset_content_sha256"]) == 1
     assert report["independence"]["unique_bundle_count"] == 0
     assert all(
-        bundle["unique_content"] is False
-        and bundle["eligible_for_catalog"] is False
+        bundle["unique_content"] is False and bundle["eligible_for_catalog"] is False
         for bundle in report["catalog"]["bundles"]
     )

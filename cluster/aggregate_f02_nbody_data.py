@@ -39,12 +39,8 @@ EXPECTED_SOURCE_PATHS = frozenset(
     }
 )
 
-_RESULT_KEYS = frozenset(
-    {"schema_version", "task", "config", "artifacts", "validation"}
-)
-_RESULT_ARTIFACT_KEYS = frozenset(
-    {"dataset", "metadata", "sha256_manifest", "file_sha256"}
-)
+_RESULT_KEYS = frozenset({"schema_version", "task", "config", "artifacts", "validation"})
+_RESULT_ARTIFACT_KEYS = frozenset({"dataset", "metadata", "sha256_manifest", "file_sha256"})
 _REQUIRED_TASK_ARTIFACTS = {
     "result": "result.json",
     "provenance": "provenance.env",
@@ -295,9 +291,7 @@ def _load_task(
     particle_counts: Sequence[int],
 ) -> _LoadedTask:
     if not path.exists():
-        return _LoadedTask(
-            _task_record(path, task, phase, status="missing")
-        )
+        return _LoadedTask(_task_record(path, task, phase, status="missing"))
     if not path.is_dir():
         return _LoadedTask(
             _task_record(
@@ -328,9 +322,7 @@ def _load_task(
     required = {name: path / filename for name, filename in _REQUIRED_TASK_ARTIFACTS.items()}
     missing = [name for name, artifact in required.items() if not artifact.is_file()]
     if missing:
-        record["errors"].append(
-            f"missing required artifacts: {', '.join(sorted(missing))}"
-        )
+        record["errors"].append(f"missing required artifacts: {', '.join(sorted(missing))}")
         return _LoadedTask(record)
 
     errors: list[str] = []
@@ -414,13 +406,8 @@ def _load_task(
         try:
             dataset_path = _resolve_recorded_path(artifacts.get("dataset"), repo_root)
             metadata_path = _resolve_recorded_path(artifacts.get("metadata"), repo_root)
-            manifest_path = _resolve_recorded_path(
-                artifacts.get("sha256_manifest"), repo_root
-            )
-            stem = (
-                f"nbody_fixedmass_n{task.n_particles}_d{task.n_dims}"
-                f"_replica{task.replica}"
-            )
+            manifest_path = _resolve_recorded_path(artifacts.get("sha256_manifest"), repo_root)
+            stem = f"nbody_fixedmass_n{task.n_particles}_d{task.n_dims}_replica{task.replica}"
             if dataset_path.name != f"{stem}.npz":
                 errors.append("recorded dataset filename does not match the expected task stem")
             if metadata_path != dataset_path.with_suffix(".metadata.json"):
@@ -527,6 +514,8 @@ def _load_task(
         array_job_id=array_job_id,
         repo_root=repo_root,
     )
+
+
 def aggregate(
     run_root: Path,
     replicas: Sequence[int] = DEFAULT_REPLICAS,
@@ -603,18 +592,13 @@ def aggregate(
         "commit": {task.commit for task in locally_valid},
         "tree": {task.tree for task in locally_valid},
         "submodules": {task.submodules for task in locally_valid},
-        "source_hashes": {
-            _sha256_json(task.source_hashes) for task in locally_valid
-        },
-        "source_manifest": {
-            task.source_manifest_sha256 for task in locally_valid
-        },
+        "source_hashes": {_sha256_json(task.source_hashes) for task in locally_valid},
+        "source_manifest": {task.source_manifest_sha256 for task in locally_valid},
         "array_job_id": {task.array_job_id for task in locally_valid},
         "repo_root": {task.repo_root for task in locally_valid},
     }
     same_provenance = {
-        name: bool(locally_valid) and len(values) == 1
-        for name, values in provenance_values.items()
+        name: bool(locally_valid) and len(values) == 1 for name, values in provenance_values.items()
     }
     common_provenance = bool(locally_valid) and all(same_provenance.values())
     if not common_provenance:
@@ -692,14 +676,10 @@ def aggregate(
             else None
         ),
         "slurm_array_job_id": (
-            common_task.array_job_id
-            if common_task and same_provenance["array_job_id"]
-            else None
+            common_task.array_job_id if common_task and same_provenance["array_job_id"] else None
         ),
         "repo_root": (
-            common_task.repo_root
-            if common_task and same_provenance["repo_root"]
-            else None
+            common_task.repo_root if common_task and same_provenance["repo_root"] else None
         ),
     }
 
@@ -734,9 +714,7 @@ def aggregate(
         "independence": {
             "verified": bool(bundles) and not duplicate_hashes,
             "candidate_bundle_count": len(bundles),
-            "unique_bundle_count": sum(
-                bundle["unique_content"] is True for bundle in bundles
-            ),
+            "unique_bundle_count": sum(bundle["unique_content"] is True for bundle in bundles),
             "duplicate_dataset_content_sha256": duplicate_hashes,
         },
         "catalog": {

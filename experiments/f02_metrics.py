@@ -351,9 +351,7 @@ def _hierarchical_point_metrics(
         dimension_values: list[np.ndarray] = []
         for dimension in sorted(hierarchy[replica]):
             dimension_values.append(_dimension_metrics(hierarchy[replica][dimension]))
-        replica_values.append(
-            _finite_column_mean(np.asarray(dimension_values), "dimension")
-        )
+        replica_values.append(_finite_column_mean(np.asarray(dimension_values), "dimension"))
     return _finite_column_mean(np.asarray(replica_values), "replica")
 
 
@@ -377,9 +375,7 @@ def _one_hierarchical_draw(
                 size=trajectory_values.shape[0],
             )
             dimension_values.append(_dimension_metrics(trajectory_values[sampled_indices]))
-        replica_values.append(
-            _finite_column_mean(np.asarray(dimension_values), "dimension")
-        )
+        replica_values.append(_finite_column_mean(np.asarray(dimension_values), "dimension"))
     return _finite_column_mean(np.asarray(replica_values), "replica")
 
 

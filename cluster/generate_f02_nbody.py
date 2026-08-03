@@ -49,9 +49,7 @@ def generation_tasks(
     return [
         GenerationTask(index, replica, particles, n_dims)
         for index, (replica, particles) in enumerate(
-            (replica, particles)
-            for replica in replicas
-            for particles in particle_counts
+            (replica, particles) for replica in replicas for particles in particle_counts
         )
     ]
 

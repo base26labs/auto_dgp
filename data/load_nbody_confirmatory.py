@@ -412,9 +412,7 @@ def prepare_confirmatory_dataset(dataset: ConfirmatoryDataset) -> PreparedConfir
         normalization=dataset.normalization,
         masses=dataset.masses,
     )
-    combined = np.concatenate(
-        [prepared.split(split).source_indices for split in _SPLIT_NAMES]
-    )
+    combined = np.concatenate([prepared.split(split).source_indices for split in _SPLIT_NAMES])
     if not np.array_equal(np.sort(combined), np.arange(dataset.X.shape[0])):
         raise DataIntegrityError("prepared splits do not preserve every source row exactly once")
     return prepared
