@@ -126,12 +126,23 @@ class ScalarPrediction:
     latent_variance: torch.Tensor
     observation_variance: torch.Tensor
     details: Any | None = None
+    released_variance_epsilon_floor: float | None = None
+    released_variance_epsilon_floor_inactive: bool | None = None
 
     def __post_init__(self) -> None:
         if self.mean.ndim != 1 or self.mean.shape != self.latent_variance.shape:
             raise ValueError("mean and latent_variance must have matching vector shapes")
         if self.observation_variance.shape != self.mean.shape:
             raise ValueError("observation_variance must match mean")
+        floor = self.released_variance_epsilon_floor
+        inactive = self.released_variance_epsilon_floor_inactive
+        if (floor is None) != (inactive is None):
+            raise ValueError("released variance floor value/status must be supplied together")
+        if floor is not None:
+            if not math.isfinite(float(floor)) or float(floor) <= 0.0:
+                raise ValueError("released variance epsilon floor must be finite and positive")
+            if inactive is not True:
+                raise ValueError("a returned prediction must certify the released floor is inactive")
 
 
 def _ensure_released_tera_available() -> None:
@@ -383,6 +394,8 @@ def _scalar_prediction(
     parameters: FrozenTERAParameters,
     *,
     details: Any | None = None,
+    released_variance_epsilon_floor: float | None = None,
+    released_variance_epsilon_floor_inactive: bool | None = None,
 ) -> ScalarPrediction:
     observation_variance = latent_variance + latent_variance.new_tensor(parameters.sigma_f)
     return ScalarPrediction(
@@ -390,6 +403,8 @@ def _scalar_prediction(
         latent_variance=latent_variance,
         observation_variance=observation_variance,
         details=details,
+        released_variance_epsilon_floor=released_variance_epsilon_floor,
+        released_variance_epsilon_floor_inactive=released_variance_epsilon_floor_inactive,
     )
 
 
@@ -417,7 +432,19 @@ def predict_released_tera(
         return _empty_prediction(x_eval, parameters)
     predictor = build_released_tera_predictor(train, parameters, m=m)
     prediction = predictor.predict_f_marginals(x_eval)
-    return _scalar_prediction(prediction.mean, prediction.var, parameters)
+    variance_floor = torch.finfo(prediction.var.dtype).eps
+    if bool((prediction.var == variance_floor).any().item()):
+        raise RuntimeError(
+            "released TERA variance equals its dtype epsilon clipping floor; "
+            "unclipped variance positivity cannot be certified"
+        )
+    return _scalar_prediction(
+        prediction.mean,
+        prediction.var,
+        parameters,
+        released_variance_epsilon_floor=float(variance_floor),
+        released_variance_epsilon_floor_inactive=True,
+    )
 
 
 def predict_orbit(

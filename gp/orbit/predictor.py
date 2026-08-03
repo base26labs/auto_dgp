@@ -44,6 +44,8 @@ class MarginalPredictions:
     variance: torch.Tensor
     ranks: torch.Tensor
     iterations: torch.Tensor
+    operator_matvecs: torch.Tensor
+    preconditioner_applications: torch.Tensor
     relative_residuals: torch.Tensor
     converged: torch.Tensor
     variance_error_upper_bounds: torch.Tensor
@@ -234,6 +236,8 @@ def predict_local_value(
             solution=x_condition.new_empty((0,)),
             residual=x_condition.new_empty((0,)),
             iterations=0,
+            operator_matvecs=0,
+            preconditioner_applications=0,
             relative_residual=0.0,
             residual_norm=0.0,
             rhs_norm=0.0,
@@ -404,6 +408,14 @@ def predict_marginal_values(
         ranks=torch.tensor([prediction.rank for prediction in predictions], device=x_train.device),
         iterations=torch.tensor(
             [prediction.solve.iterations for prediction in predictions],
+            device=x_train.device,
+        ),
+        operator_matvecs=torch.tensor(
+            [prediction.solve.operator_matvecs for prediction in predictions],
+            device=x_train.device,
+        ),
+        preconditioner_applications=torch.tensor(
+            [prediction.solve.preconditioner_applications for prediction in predictions],
             device=x_train.device,
         ),
         relative_residuals=torch.tensor(

@@ -134,3 +134,26 @@ commit/tree/submodule and source hashes, then writes one NPZ/metadata/SHA bundle
 Set `F02_VERIFY_EXISTING=1` only to revalidate already frozen artifacts; this mode does not regenerate
 them.  The predictive jobs must consume the aggregated catalog and preserve the corpus source IDs and
 the protocol's label-independent temporal slice.
+
+## F02 internal optimizer selection
+
+`f02_internal_optimizer.sbatch` runs the fixed 135-task development grid (three development
+replicas, five particle counts, three TERA update budgets, and three seeds) on one exclusive L40S
+node at a time.  It authenticates catalog SHA-256
+`2dee429bdaf50cc78cb40ba8b038f7e4731bb07127927c55607b528c1db66942` before reading any corpus
+payload, refuses dirty source/submodule state, and records source, dependency, runtime, GPU, Slurm,
+command, exit-code, and artifact hashes.  These timings remain descriptive; the registered analytic
+resource proxies determine resource matching.
+
+The helper is non-submitting by default.  Run it from the canonical BC checkout after the frozen
+catalog and data are present:
+
+```bash
+bash cluster/submit_f02_internal_optimizer.sh --preflight
+bash cluster/submit_f02_internal_optimizer.sh --scheduler-test --pilot
+bash cluster/submit_f02_internal_optimizer.sh --submit --pilot  # index 0 only
+bash cluster/submit_f02_internal_optimizer.sh --submit           # all 135, %1 by default
+```
+
+The pilot is exactly replica 0, two particles, 20 optimizer updates, and seed 11.  Passing `--pilot`
+never weakens the explicit-submit guard: without `--submit`, it only preflights that one-task array.

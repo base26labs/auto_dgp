@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 import torch
@@ -10,6 +12,7 @@ from data.load_nbody_confirmatory import (
     PreparedConfirmatoryDataset,
     PreparedConfirmatorySplit,
 )
+from experiments import f02_internal_models as internal_models
 from experiments.f02_internal_models import (
     TensorConfirmatorySplit,
     build_released_tera_predictor,
@@ -130,6 +133,42 @@ def test_frozen_parameters_reconstruct_released_predictor_at_arbitrary_m(
     assert predictor.data.sigma_f == pytest.approx(np.sqrt(parameters.sigma_f))
     assert predictor.data.sigma_g == pytest.approx(parameters.sigma_g)
     assert not parameters.lengthscale.requires_grad
+
+
+def test_released_tera_epsilon_variance_floor_fails_conservatively(
+    monkeypatch,
+    tiny_tensor_split,
+    zero_step_fit,
+) -> None:
+    _, parameters = zero_step_fit
+    x_eval = tiny_tensor_split.X[:2]
+    floor = torch.finfo(x_eval.dtype).eps
+
+    class FakePredictor:
+        @staticmethod
+        def predict_f_marginals(value):
+            return SimpleNamespace(
+                mean=value.new_zeros((value.shape[0],)),
+                var=value.new_full((value.shape[0],), floor),
+            )
+
+    monkeypatch.setattr(
+        internal_models,
+        "build_released_tera_predictor",
+        lambda *args, **kwargs: FakePredictor(),
+    )
+    with pytest.raises(RuntimeError, match="epsilon clipping floor"):
+        predict_released_tera(tiny_tensor_split, x_eval, parameters, m=4)
+
+    FakePredictor.predict_f_marginals = staticmethod(
+        lambda value: SimpleNamespace(
+            mean=value.new_zeros((value.shape[0],)),
+            var=value.new_full((value.shape[0],), 2.0 * floor),
+        )
+    )
+    prediction = predict_released_tera(tiny_tensor_split, x_eval, parameters, m=4)
+    assert prediction.released_variance_epsilon_floor == floor
+    assert prediction.released_variance_epsilon_floor_inactive is True
 
 
 def test_fit_exposes_exact_update_budget_and_rejects_ambiguous_budget(

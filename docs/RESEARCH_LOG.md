@@ -7,6 +7,30 @@ scope downgrades are reported in place, loudly, naming the check that failed.
 
 ---
 
+## 2026-08-03 — F02 confirmatory N-body corpus: **frozen and integrity-ready**
+
+This is a data/provenance milestone, not a predictive result.  The preregistered F02 generator ran
+from clean commit `a7d2a103aee4bcc0c58494905c6799266cb06187`, tree
+`745af6587fa9fc7d26c6f1236e994a8208c43c98`, with TERA submodule `b2382e10...` as BC Slurm array
+job 2810370.  It produced all 65 fixed-mass corpora: 15 development units (three replicas by five
+state dimensions) and 50 untouched confirmatory units (ten replicas by five dimensions).
+
+The strict catalog at BC path `runs/f02_nbody_data/job-2810370/catalog.json` reloaded every
+NPZ/metadata/SHA bundle and reports 65 valid, 0 missing, 0 failed, 0 invalid, and 0 unexpected tasks.
+All 65 semantic dataset hashes are unique.  Commit, tree, submodule, source hashes, source manifest,
+repository root, and Slurm array provenance agree across tasks.  The catalog SHA-256 is
+`2dee429bdaf50cc78cb40ba8b038f7e4731bb07127927c55607b528c1db66942`.
+
+Generating the confirmatory corpora does not unlock their labels.  F02 test scoring remains blocked
+until the optimizer budgets and dimension-specific ORBIT neighbour schedule have been selected only
+from development validation data, serialized into a committed frozen recipe, and accepted by the
+test-locked runner.  An independent gate audit showed that a recipe covering only one corpus would
+still permit sequential test peeking.  The current runner therefore hard-disables confirmatory test
+execution even after that per-bundle scaffold validates; release additionally requires one global
+50-corpus task recipe, a single pinned analysis commit/hash, and a catalog-level one-release ledger.
+
+---
+
 ## 2026-08-03 — ORBIT F01 upstream-scale replication: **H2, solver, and variance passed**
 
 Scope: this remains a fixed-hyperparameter GP-simulation mechanism test, **not** an N-body,

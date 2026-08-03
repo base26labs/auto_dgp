@@ -213,6 +213,46 @@ def test_reduced_cg_restarts_when_recursive_residual_stops_too_early():
     torch.testing.assert_close(result.residual, rhs - matrix @ result.solution)
 
 
+def test_reduced_cg_counts_restart_residual_matvecs_and_preconditioner_calls():
+    """Fresh residual checks are counted even when they trigger a restart."""
+
+    class StatefulScalarOperator:
+        size = 1
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def matmul(self, value: torch.Tensor) -> torch.Tensor:
+            self.calls += 1
+            # First iteration solves the recursive residual, but its fresh check
+            # (call two) deliberately exposes residual drift and forces restart.
+            # The second fresh check returns the exact rhs and converges.
+            multiplier = (1.0, 0.0, 1.0, 0.5)[self.calls - 1]
+            return value * multiplier
+
+    operator = StatefulScalarOperator()
+    preconditioner_calls = 0
+
+    def identity_preconditioner(value: torch.Tensor) -> torch.Tensor:
+        nonlocal preconditioner_calls
+        preconditioner_calls += 1
+        return value
+
+    result = solve_reduced_cg(
+        operator,
+        torch.ones(1, dtype=torch.float64),
+        tolerance=1e-12,
+        max_iterations=2,
+        preconditioner=identity_preconditioner,
+    )
+
+    assert result.converged
+    assert result.iterations == 2
+    assert result.operator_matvecs == operator.calls == 4
+    assert result.operator_matvecs > result.iterations + 1
+    assert result.preconditioner_applications == preconditioner_calls == 2
+
+
 def test_approximate_rank_mode_reports_discarded_geometry():
     delta, _, _ = _fixture(m=6, d=9)
     exact = build_local_geometry(delta.T @ delta)

@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import torch
 
@@ -372,6 +372,8 @@ class CGResult:
     solution: torch.Tensor
     residual: torch.Tensor
     iterations: int
+    operator_matvecs: int
+    preconditioner_applications: int
     relative_residual: float
     residual_norm: float
     rhs_norm: float
@@ -411,10 +413,14 @@ def _cg_result(
     solution: torch.Tensor,
     iterations: int,
     tolerance: float,
+    *,
+    operator_matvecs: int,
+    preconditioner_applications: int,
 ) -> CGResult:
     """Build a result from a recomputed, rather than recursive, residual."""
 
     true_residual = rhs - operator.matmul(solution)
+    operator_matvecs += 1
     rhs_norm = float(torch.linalg.norm(rhs))
     residual_norm = float(torch.linalg.norm(true_residual))
     relative_residual = residual_norm / rhs_norm if rhs_norm else 0.0
@@ -423,6 +429,8 @@ def _cg_result(
         solution=solution,
         residual=true_residual,
         iterations=iterations,
+        operator_matvecs=operator_matvecs,
+        preconditioner_applications=preconditioner_applications,
         relative_residual=relative_residual,
         residual_norm=residual_norm,
         rhs_norm=rhs_norm,
@@ -508,23 +516,58 @@ def solve_reduced_cg(
     residual = rhs.clone()
     rhs_norm = torch.linalg.norm(rhs)
     if float(rhs_norm) == 0.0:
-        return CGResult(solution, rhs.clone(), 0, 0.0, 0.0, 0.0, True)
+        return CGResult(
+            solution=solution,
+            residual=rhs.clone(),
+            iterations=0,
+            operator_matvecs=0,
+            preconditioner_applications=0,
+            relative_residual=0.0,
+            residual_norm=0.0,
+            rhs_norm=0.0,
+            converged=True,
+        )
 
-    z = residual if preconditioner is None else preconditioner(residual)
+    operator_matvecs = 0
+    preconditioner_applications = 0
+    if preconditioner is None:
+        z = residual
+    else:
+        z = preconditioner(residual)
+        preconditioner_applications += 1
     direction = z.clone()
     rz = torch.dot(residual, z)
     relative_residual = 1.0
     for iteration in range(1, max_iterations + 1):
         image = operator.matmul(direction)
+        operator_matvecs += 1
         curvature = torch.dot(direction, image)
         if not bool(torch.isfinite(curvature).item()) or float(curvature) <= 0.0:
-            return _cg_result(operator, rhs, solution, iteration - 1, tolerance)
+            return _cg_result(
+                operator,
+                rhs,
+                solution,
+                iteration - 1,
+                tolerance,
+                operator_matvecs=operator_matvecs,
+                preconditioner_applications=preconditioner_applications,
+            )
         step = rz / curvature
         solution = solution + step * direction
         residual = residual - step * image
         relative_residual = float(torch.linalg.norm(residual) / rhs_norm)
         if relative_residual <= tolerance:
-            checked = _cg_result(operator, rhs, solution, iteration, tolerance)
+            checked = _cg_result(
+                operator,
+                rhs,
+                solution,
+                iteration,
+                tolerance,
+                operator_matvecs=operator_matvecs,
+                preconditioner_applications=preconditioner_applications,
+            )
+            operator_matvecs = checked.operator_matvecs
+            preconditioner_applications = checked.preconditioner_applications
             if checked.converged or iteration == max_iterations:
                 return checked
 
@@ -533,16 +576,46 @@ def solve_reduced_cg(
             # Replace the residual and reliably restart instead of returning a
             # result whose own convergence flag contradicts the stop decision.
             residual = checked.residual
-            z = residual if preconditioner is None else preconditioner(residual)
+            if preconditioner is None:
+                z = residual
+            else:
+                z = preconditioner(residual)
+                preconditioner_applications += 1
             rz = torch.dot(residual, z)
             if not bool(torch.isfinite(rz).item()) or float(rz) <= 0.0:
-                return checked
+                # The restart preconditioner application happened even though
+                # it exposed a breakdown, so retain it in the exact resource
+                # accounting attached to the returned fresh-residual result.
+                return replace(
+                    checked,
+                    preconditioner_applications=preconditioner_applications,
+                )
             direction = z.clone()
             continue
-        next_z = residual if preconditioner is None else preconditioner(residual)
+        if preconditioner is None:
+            next_z = residual
+        else:
+            next_z = preconditioner(residual)
+            preconditioner_applications += 1
         next_rz = torch.dot(residual, next_z)
         if not bool(torch.isfinite(next_rz).item()) or math.isclose(float(rz), 0.0):
-            return _cg_result(operator, rhs, solution, iteration, tolerance)
+            return _cg_result(
+                operator,
+                rhs,
+                solution,
+                iteration,
+                tolerance,
+                operator_matvecs=operator_matvecs,
+                preconditioner_applications=preconditioner_applications,
+            )
         direction = next_z + (next_rz / rz) * direction
         rz = next_rz
-    return _cg_result(operator, rhs, solution, max_iterations, tolerance)
+    return _cg_result(
+        operator,
+        rhs,
+        solution,
+        max_iterations,
+        tolerance,
+        operator_matvecs=operator_matvecs,
+        preconditioner_applications=preconditioner_applications,
+    )
