@@ -7,6 +7,47 @@ scope downgrades are reported in place, loudly, naming the check that failed.
 
 ---
 
+## 2026-08-03 — ORBIT F01 upstream-scale replication: **H2, solver, and variance passed**
+
+Scope: this remains a fixed-hyperparameter GP-simulation mechanism test, **not** an N-body,
+training, wall-time, or SOTA performance result.  It ran the post-residual-fix commit
+`beeeda20fb226f7aac7ab6210679afc3ea3eea97` with TERA submodule `b2382e10...` in one exclusive L40S
+allocation (Slurm job 2810279).  The five independent units used upstream de Roos-style seeds
+`42 + 1000003 * repeat`, `n=150`, `d=500`, 100 evaluation points, Matérn-5/2, float32,
+`m={3,5,10,20,30,50,100}`, and recomputed-residual CG tolerance `1e-5`; TERA was evaluated through
+`m=50`.  Wall time was recorded but excluded from every hypothesis test.
+
+The provenance-strict aggregate at BC path
+`runs/f01_orbit_official_beeeda2/job-2810279/aggregate.json` reports:
+
+- all 5/5 expected tasks valid and content-distinct, with matching commit, tree, submodule, source,
+  package, normalized config, and full-node sole-job exclusivity evidence;
+- at the TERA-controlled `m=50`, mean marginal KL was `0.0125718` (bootstrap 95% interval
+  `[0.0114981, 0.0134325]`); resource-headroom ORBIT at `m=100<n` achieved `0.00469795`
+  (`[0.00419330, 0.00525266]`);
+- the paired mean KL improvement was `0.00787385`, with a 10,000-sample paired percentile-bootstrap
+  95% interval `[0.00705988, 0.00868200]`, excluding zero on all five resampled dataset units;
+- all 35 ORBIT groups converged according to freshly recomputed residuals (maximum relative residual
+  `9.98844e-6`) and had valid positive variances (minimum raw variance `0.356503`).
+
+The analytic resource accounting is deliberately separate from wall time.  TERA `m=50` materializes
+`6,250,000` reduced-covariance scalars per target and has `5.20833e11` leading dense-Cholesky flops
+across 100 targets.  ORBIT `m=100` stores a `60,100`-scalar operator-core proxy per target and used a
+mean `3.71379e10` counted operator-plus-preconditioner flops across the same 100 targets (range
+`[3.70578e10, 3.71980e10]`).  Thus the larger-`m` arm is inside this accounting envelope by factors
+of about 104 in persistent core state and 14.0 in counted leading/iterative flops.  These are
+method-specific analytic proxies, not end-to-end hardware-runtime ratios.
+
+This float32 replication was preregistered as **ineligible for H1 same-`m` equivalence**, whose
+`1e-6` gate requires float64.  Its aggregate therefore correctly records H1 as `insufficient` and
+`overall_mechanism_pass=false`; that bookkeeping must not be misreported as an H2 failure.  The
+independent float64 pilot above supplies the H1 equivalence evidence, while this replication supplies
+the upstream-scale H2, solver, and variance evidence.  Float32 runs also provide no IEEE-rigorous
+posterior certificate (`floating_point_rigorous=false`), and the exact-arithmetic lower-bound
+certificate becomes uninformative at `m=100`; neither certificate is used as an empirical gate here.
+
+---
+
 ## 2026-08-03 — ORBIT F01 mechanism pilot: **all preregistered gates passed**
 
 Scope: this is a fixed-hyperparameter, exact-GP-simulation mechanism test, **not** an N-body,
