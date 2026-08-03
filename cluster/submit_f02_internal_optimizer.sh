@@ -90,6 +90,7 @@ fi
 for required in \
     "${SBATCH_SCRIPT}" \
     "${GRID_HELPER}" \
+    "${REPO_ROOT}/cluster/check_python_environment.py" \
     "${REPO_ROOT}/experiments/f02_internal_task.py" \
     "${REPO_ROOT}/gp/tera/vendor/src/gp_sim_kl/simulation.py" \
     "${REPO_ROOT}/pyproject.toml" \
@@ -172,7 +173,7 @@ done
 # Import-only dependency validation; no model is fit and no corpus is loaded.
 PYTHONDONTWRITEBYTECODE=1 "${PYTHON_BIN}" -c \
     'import torch; import experiments.f02_internal_task; print(torch.__version__)'
-PYTHONDONTWRITEBYTECODE=1 "${PYTHON_BIN}" -m pip check
+PYTHONDONTWRITEBYTECODE=1 "${PYTHON_BIN}" cluster/check_python_environment.py >/dev/null
 
 export F02_INTERNAL_REPO_ROOT=${REPO_ROOT}
 export F02_INTERNAL_PYTHON=${PYTHON_BIN}

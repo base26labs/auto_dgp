@@ -80,12 +80,12 @@ finish() {
         "${TASK_DIR}/command.txt"
         "${TASK_DIR}/dataset-files.sha256"
         "${TASK_DIR}/dependency-files.sha256"
+        "${TASK_DIR}/dependency-audit.json"
         "${TASK_DIR}/dependency-packages.txt"
         "${TASK_DIR}/exit-code.txt"
         "${TASK_DIR}/finished-at.txt"
         "${TASK_DIR}/git-status.txt"
         "${TASK_DIR}/git-submodules.txt"
-        "${TASK_DIR}/pip-check.txt"
         "${TASK_DIR}/provenance.env"
         "${TASK_DIR}/runtime.json"
         "${TASK_DIR}/slurm-job.txt"
@@ -125,6 +125,7 @@ echo "F02 internal task: index=${TASK_INDEX} ${TASK_LABEL}"
 for required in \
     "${REPO_ROOT}/experiments/f02_internal_task.py" \
     "${REPO_ROOT}/cluster/f02_internal_grid.py" \
+    "${REPO_ROOT}/cluster/check_python_environment.py" \
     "${REPO_ROOT}/gp/tera/vendor/src/gp_sim_kl/simulation.py" \
     "${REPO_ROOT}/pyproject.toml" \
     "${REPO_ROOT}/uv.lock"; do
@@ -277,6 +278,7 @@ export F02_INTERNAL_SLURM_EXCLUSIVE_MODE=${EXCLUSIVE_MODE}
 
 git ls-files -z -- \
     cluster/f02_internal_grid.py \
+    cluster/check_python_environment.py \
     cluster/f02_internal_optimizer.sbatch \
     cluster/submit_f02_internal_optimizer.sh \
     data/generate_nbody_confirmatory.py \
@@ -292,8 +294,10 @@ git ls-files -z -- \
     | xargs -0 sha256sum \
     > "${TASK_DIR}/source-files.sha256"
 sha256sum pyproject.toml uv.lock > "${TASK_DIR}/dependency-files.sha256"
-"${PYTHON_BIN}" -m pip freeze --all | LC_ALL=C sort > "${TASK_DIR}/dependency-packages.txt"
-"${PYTHON_BIN}" -m pip check > "${TASK_DIR}/pip-check.txt"
+"${PYTHON_BIN}" cluster/check_python_environment.py \
+    --report "${TASK_DIR}/dependency-audit.json" \
+    --packages-out "${TASK_DIR}/dependency-packages.txt" \
+    >/dev/null
 
 "${PYTHON_BIN}" -c '
 import importlib.metadata

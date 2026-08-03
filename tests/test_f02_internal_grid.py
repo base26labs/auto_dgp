@@ -187,6 +187,9 @@ def test_slurm_harness_locks_scientific_and_audit_invariants() -> None:
     assert "OverSubscribe=EXCLUSIVE" in batch
     assert "slurm_no_oversubscribe_full_node_sole_job" in batch
     assert "F02_INTERNAL_SLURM_EXCLUSIVE_VERIFIED=1" in batch
+    assert "cluster/check_python_environment.py" in batch
+    assert "-m pip" not in batch
+    assert "-m pip" not in submit
     assert "ACTUAL_CATALOG_SHA256" in batch
     assert batch.index("ACTUAL_CATALOG_SHA256") < batch.index("DATASET_PATH=")
     assert "--evaluation-split validation" in batch
@@ -203,6 +206,7 @@ def test_slurm_harness_locks_scientific_and_audit_invariants() -> None:
         "git-submodules.txt",
         "source-files.sha256",
         "dependency-files.sha256",
+        "dependency-audit.json",
         "dependency-packages.txt",
         "runtime.json",
         "slurm-job.txt",
