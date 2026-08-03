@@ -7,6 +7,68 @@ scope downgrades are reported in place, loudly, naming the check that failed.
 
 ---
 
+## 2026-08-03 — F02b fixed-geometry oracle diagnostic: **exploratory decomposition only**
+
+This development-only diagnostic does **not** pass N0, N1, or N2 and does not revive the terminated
+F02 protocol.  It ran clean commit `5fa3a72409486c688f53d5de430cfa72808c70f0`, tree
+`fc01b25ab0bffe12b85c0785772deebd50a47c50`, with TERA gitlink `b2382e10...` as Slurm job
+2810629 on the exclusive four-L40S `interactivegpu` node `g019`.  The job completed with exit code
+zero; elapsed time is excluded from all comparisons.  Its strict v3 artifact is
+`runs/f02_same_m_diagnostic/replica0-d12-steps20-seed11-5fa3a72.json` (SHA-256
+`ffbea890b67afe9e5742ccf3d7209623f040fe999d39baaad23d1dc4c83aa202`).  The artifact binds the
+clean source tree, dependency hashes, corpus manifest and file hashes, full registered
+configuration, and catalog SHA-256 `2dee429b...942`.
+
+The diagnostic removes the earlier dtype-dependent geometry confounds.  One pinned-vendor fp32 KNN
+call selected all 20 `m=50` neighbourhoods, and the identical source-row indices were injected into
+every TERA, ORBIT, and independent support64 arm.  Native promoted-fp64 KNN happened to return the
+same order and sets on this coordinate, but that observation is not generalized to near-tie cases.
+The frozen source-fp32 rank rule retained rank 6 for every support64 and ORBIT arm, matching the six
+known center-of-mass and total-momentum constraints.  The retained/discarded singular-value boundary
+gap ranged from `112.5` to `2.86e5`; nevertheless, rank 6 is not called an N0 pass because the gap,
+constraint-residual, and perturbation-stability thresholds remain TBD.
+
+The rank bookkeeping also exposes an important precision boundary.  Native fp32 classified all
+discarded modes as unresolved, whereas native fp64 resolved rank 12 for every target.  ORBIT64
+therefore correctly records `basis_exact=false`: its residual certificate covers the fixed rank-6
+support, not the full native-fp64 span.  Relative to support64, the fp64 q-projector was identical to
+stored precision; the fp32 projector differed by `2.67476e-4` max-absolute and `6.63791e-4` maximum
+relative Frobenius error.  No acceptance threshold is retrofitted to those observations.
+
+Within the selected support, the independent dense oracle strongly validates the ORBIT algebra.
+Support64 versus ORBIT64 differed by at most `3.14941e-10` in mean and `1.96024e-15` in latent
+variance.  All 20 ORBIT64 solves met the requested `1e-10` tolerance (maximum fresh residual
+`7.19647e-11`), while the oracle's maximum direct-solve residual was `1.81038e-15`.  Released TERA64
+also agreed with support64 to `6.60870e-10` in mean and `2.56961e-13` in variance.  These are
+unscaled, single-coordinate development errors and therefore calibration evidence, not a frozen N1
+decision.
+
+The matched-stopping N2 probe gives a mixed result.  At tolerance `1e-5`, both fp32 and fp64
+converged on all 20 targets, with maximum fresh residuals `9.50933e-6` and `9.59858e-6`; their
+predictions differed by at most `4.89081e-4` in mean and `2.87963e-6` in variance.  At tolerance
+`1e-8`, fp64 converged on all targets, but fp32 converged on none: all 20 reached the 300-iteration
+cap and had fresh residuals as large as `4.30660e-6`.  The associated `5.77451e-4` mean and
+`3.52410e-6` variance differences cannot be treated as a converged N2 comparison.  Tightening the
+fp32 request beyond its numerical floor is therefore not a viable repair.
+
+Tracing the released dense baseline separates most of the original discrepancy from ORBIT's
+iterative stopping rule.  TERA32 escalated its q-coordinate jitter to `1e-5` on 7 targets and
+`1e-4` on 13 targets, while its function-coordinate jitter stayed at `1e-8`; TERA64 used `1e-8` for
+both on every target.  The base support64/TERA32 discrepancy was `0.180658` in mean and
+`9.07684e-4` in variance.  Recomputing support64 with each target's actual TERA32 function and q
+jitters reduced those maxima to `0.0106929` and `3.09038e-5`, shrinkage factors of about 16.9 and
+29.4.  No matched support solve re-escalated its requested jitter.  Thus adaptive q regularization
+explains most, but not all, of the fp32 difference; the remainder is consistent with fp32 dense
+factorization/coordinate arithmetic but is not isolated by this artifact alone.
+
+F02b remains a draft and confirmatory labels remain locked.  Before freezing it, development
+calibration must span dimensions, neighbourhood sizes, seeds, and rank boundaries; add
+scale-normalized moment/projector errors, physical-constraint and permutation/perturbation checks,
+a higher-precision reference, and a fresh residual diagnostic for released TERA's dense q solve;
+and choose tolerances without using confirmatory labels.
+
+---
+
 ## 2026-08-03 — F02 optimizer pilot: **stopped by the preregistered same-`m` gate**
 
 The original F02 protocol did **not** pass development validation and must not be used for a
