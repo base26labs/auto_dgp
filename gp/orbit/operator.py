@@ -524,7 +524,21 @@ def solve_reduced_cg(
         residual = residual - step * image
         relative_residual = float(torch.linalg.norm(residual) / rhs_norm)
         if relative_residual <= tolerance:
-            return _cg_result(operator, rhs, solution, iteration, tolerance)
+            checked = _cg_result(operator, rhs, solution, iteration, tolerance)
+            if checked.converged or iteration == max_iterations:
+                return checked
+
+            # Recursive CG residuals can drift just below the stopping
+            # threshold while a fresh operator application remains above it.
+            # Replace the residual and reliably restart instead of returning a
+            # result whose own convergence flag contradicts the stop decision.
+            residual = checked.residual
+            z = residual if preconditioner is None else preconditioner(residual)
+            rz = torch.dot(residual, z)
+            if not bool(torch.isfinite(rz).item()) or float(rz) <= 0.0:
+                return checked
+            direction = z.clone()
+            continue
         next_z = residual if preconditioner is None else preconditioner(residual)
         next_rz = torch.dot(residual, next_z)
         if not bool(torch.isfinite(next_rz).item()) or math.isclose(float(rz), 0.0):

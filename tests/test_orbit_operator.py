@@ -183,6 +183,36 @@ def test_reduced_cg_matches_dense_solve(preconditioned: bool):
     torch.testing.assert_close(result.solution, expected, rtol=2e-8, atol=2e-8)
 
 
+def test_reduced_cg_restarts_when_recursive_residual_stops_too_early():
+    """The returned status must be based on a fresh operator residual."""
+
+    dimension = 8
+    generator = torch.Generator().manual_seed(4)
+    vectors, _ = torch.linalg.qr(
+        torch.randn(dimension, dimension, generator=generator, dtype=torch.float32)
+    )
+    eigenvalues = torch.logspace(0, 4, dimension, dtype=torch.float32)
+    matrix = (vectors * eigenvalues) @ vectors.T
+    rhs = torch.randn(dimension, generator=generator, dtype=torch.float32)
+
+    class DenseOperator:
+        size = dimension
+
+        @staticmethod
+        def matmul(value: torch.Tensor) -> torch.Tensor:
+            return matrix @ value
+
+    result = solve_reduced_cg(
+        DenseOperator(),
+        rhs,
+        tolerance=1e-5,
+        max_iterations=4 * dimension,
+    )
+    assert result.converged
+    assert result.relative_residual <= 1e-5
+    torch.testing.assert_close(result.residual, rhs - matrix @ result.solution)
+
+
 def test_approximate_rank_mode_reports_discarded_geometry():
     delta, _, _ = _fixture(m=6, d=9)
     exact = build_local_geometry(delta.T @ delta)
