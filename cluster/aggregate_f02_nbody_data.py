@@ -24,7 +24,6 @@ from cluster.generate_f02_nbody import GenerationTask, generation_tasks
 from data.generate_nbody_confirmatory import ConfirmatoryConfig
 from data.load_nbody_confirmatory import LoadedConfirmatoryBundle, load_confirmatory_bundle
 
-
 DEFAULT_REPLICAS = (0, 1, 2, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110)
 DEFAULT_DEVELOPMENT_REPLICAS = (0, 1, 2)
 DEFAULT_PARTICLE_COUNTS = (2, 4, 6, 8, 10)

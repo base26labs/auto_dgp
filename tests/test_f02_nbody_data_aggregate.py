@@ -11,7 +11,6 @@ from cluster.generate_f02_nbody import GenerationTask, generation_tasks, run_gen
 from data.generate_nbody_confirmatory import ConfirmatoryConfig, write_bundle
 from data.load_nbody_confirmatory import load_confirmatory_bundle
 
-
 _GENERATION = {
     "n_trajectories": 5,
     "steps_per_trajectory": 2,
