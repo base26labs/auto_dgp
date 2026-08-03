@@ -56,6 +56,27 @@ def _comparison(reference: ScalarPrediction, candidate: ScalarPrediction) -> dic
     }
 
 
+def _cast_prediction(prediction: ScalarPrediction, dtype: torch.dtype) -> ScalarPrediction:
+    return ScalarPrediction(
+        mean=prediction.mean.to(dtype=dtype),
+        latent_variance=prediction.latent_variance.to(dtype=dtype),
+        observation_variance=prediction.observation_variance.to(dtype=dtype),
+    )
+
+
+def _scalar_scores(target: torch.Tensor, prediction: ScalarPrediction) -> dict[str, float]:
+    error = prediction.mean - target
+    variance = prediction.latent_variance
+    return {
+        "rmse": float(torch.sqrt(torch.mean(error * error)).detach().cpu()),
+        "latent_gaussian_nll": float(
+            torch.mean(0.5 * (torch.log(2.0 * torch.pi * variance) + error * error / variance))
+            .detach()
+            .cpu()
+        ),
+    }
+
+
 def _orbit_solver(prediction: ScalarPrediction) -> dict[str, Any]:
     if prediction.details is None:
         raise RuntimeError("ORBIT diagnostic prediction lacks solver details")
@@ -125,8 +146,37 @@ def _prediction_set(
     *,
     m: int,
     cg_tolerance: float,
-) -> tuple[ScalarPrediction, ScalarPrediction]:
-    tera = predict_released_tera(train, evaluation.X, parameters, m=m)
+) -> tuple[ScalarPrediction, ScalarPrediction, list[float]]:
+    # The released helper does not expose which adaptive q-coordinate jitter
+    # succeeded.  This diagnostic-only drop-in repeats its six-line algorithm
+    # verbatim and restores the module global immediately after prediction.
+    import md22_regression.models.tera as released_tera_module
+
+    selected_jitters: list[float] = []
+    original_cholesky = released_tera_module.cholesky_with_jitter
+
+    def recording_cholesky(
+        matrix: torch.Tensor,
+        jitter0: float = 1e-8,
+        jitter_max: float = 1e-1,
+    ) -> torch.Tensor:
+        jitter = jitter0
+        identity = torch.eye(matrix.shape[-1], dtype=matrix.dtype, device=matrix.device)
+        while True:
+            try:
+                factor = torch.linalg.cholesky(matrix + jitter * identity)
+                selected_jitters.append(float(jitter))
+                return factor
+            except Exception:
+                jitter *= 10.0
+                if jitter > jitter_max:
+                    raise
+
+    released_tera_module.cholesky_with_jitter = recording_cholesky
+    try:
+        tera = predict_released_tera(train, evaluation.X, parameters, m=m)
+    finally:
+        released_tera_module.cholesky_with_jitter = original_cholesky
     orbit = predict_orbit(
         train,
         evaluation.X,
@@ -137,7 +187,9 @@ def _prediction_set(
         function_jitter=1e-8,
         reduced_jitter=1e-8,
     )
-    return tera, orbit
+    if len(selected_jitters) != evaluation.X.shape[0]:
+        raise RuntimeError("released reduced Cholesky jitter trace has the wrong row count")
+    return tera, orbit, selected_jitters
 
 
 def run_diagnostic(
@@ -176,7 +228,7 @@ def run_diagnostic(
     model = fit_released_tera(train32, **_fit_kwargs(config))
     parameters32 = freeze_tera_parameters(model)
 
-    tera32, orbit32 = _prediction_set(
+    tera32, orbit32, tera32_jitters = _prediction_set(
         train32,
         evaluation32,
         parameters32,
@@ -202,7 +254,7 @@ def run_diagnostic(
         device=device,
     )
     parameters64 = replace(parameters32, lengthscale=parameters32.lengthscale.double())
-    tera64, orbit64 = _prediction_set(
+    tera64, orbit64, tera64_jitters = _prediction_set(
         train64,
         evaluation64,
         parameters64,
@@ -228,6 +280,11 @@ def run_diagnostic(
         },
         "float32_default": {
             "comparison": _comparison(tera32, orbit32),
+            "released_tera_selected_q_coordinate_jitter": tera32_jitters,
+            "scores": {
+                "TERA-50": _scalar_scores(evaluation32.value, tera32),
+                "ORBIT-50": _scalar_scores(evaluation32.value, orbit32),
+            },
             "solver": _orbit_solver(orbit32),
         },
         "float32_tighter_cg": {
@@ -236,13 +293,19 @@ def run_diagnostic(
         },
         "float64_prediction_only": {
             "comparison": _comparison(tera64, orbit64),
+            "released_tera_selected_q_coordinate_jitter": tera64_jitters,
+            "scores": {
+                "TERA-50": _scalar_scores(evaluation64.value, tera64),
+                "ORBIT-50": _scalar_scores(evaluation64.value, orbit64),
+            },
             "solver": _orbit_solver(orbit64),
-            "tera_float32_to_float64": _comparison(
-                ScalarPrediction(
-                    mean=tera64.mean.float(),
-                    latent_variance=tera64.latent_variance.float(),
-                    observation_variance=tera64.observation_variance.float(),
-                ),
+            "tera_float32_to_float64": _comparison(_cast_prediction(tera64, torch.float32), tera32),
+            "orbit_float32_to_float64": _comparison(
+                _cast_prediction(orbit64, torch.float32),
+                orbit32,
+            ),
+            "tera_float32_to_orbit_float64": _comparison(
+                _cast_prediction(orbit64, torch.float32),
                 tera32,
             ),
         },
@@ -250,6 +313,12 @@ def run_diagnostic(
             train32.X,
             evaluation32.X,
             parameters32,
+            m=50,
+        ),
+        "float64_local_singular_spectra": _singular_spectra(
+            train64.X,
+            evaluation64.X,
+            parameters64,
             m=50,
         ),
         "catalog": {
