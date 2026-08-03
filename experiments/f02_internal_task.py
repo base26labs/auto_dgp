@@ -141,8 +141,7 @@ class InternalTaskConfig:
         candidates = tuple(int(value) for value in raw_candidates)
         if any(value not in DEFAULT_CANDIDATE_M for value in candidates):
             raise ValueError(
-                f"candidate_m values must come from the preregistered grid "
-                f"{DEFAULT_CANDIDATE_M}"
+                f"candidate_m values must come from the preregistered grid {DEFAULT_CANDIDATE_M}"
             )
         if tuple(sorted(set(candidates))) != candidates:
             raise ValueError("candidate_m must be unique and strictly increasing")
@@ -194,9 +193,7 @@ class InternalTaskConfig:
             or self.cg_tolerance <= 0.0
             or self.cg_tolerance > MAX_CG_TOLERANCE
         ):
-            raise ValueError(
-                f"cg_tolerance must be finite and lie in (0, {MAX_CG_TOLERANCE}]"
-            )
+            raise ValueError(f"cg_tolerance must be finite and lie in (0, {MAX_CG_TOLERANCE}]")
         if self.cg_max_iterations is not None and self.cg_max_iterations <= 0:
             raise ValueError("cg_max_iterations must be positive when supplied")
         for name in ("function_jitter", "reduced_jitter"):
@@ -372,9 +369,7 @@ def _validate_preregistered_catalog_grid(
         if not isinstance(raw_entry, dict):
             raise InternalTaskError("F02 catalog bundle entries must be objects")
         entry = raw_entry
-        expected_phase = (
-            "development" if replica in F02_DEVELOPMENT_REPLICAS else "confirmatory"
-        )
+        expected_phase = "development" if replica in F02_DEVELOPMENT_REPLICAS else "confirmatory"
         expected_config = asdict(
             ConfirmatoryConfig(
                 n_particles=n_particles,
@@ -408,8 +403,7 @@ def _validate_preregistered_catalog_grid(
             "sha256_manifest": f"{stem}.sha256.json",
         }
         if any(
-            not isinstance(paths.get(name), str)
-            or Path(paths[name]).name != expected_name
+            not isinstance(paths.get(name), str) or Path(paths[name]).name != expected_name
             for name, expected_name in expected_names.items()
         ):
             raise InternalTaskError("F02 catalog bundle filenames do not match the frozen grid")
@@ -937,9 +931,7 @@ def _orbit_diagnostics(
 
     ranks = [int(value) for value in details.ranks.detach().cpu().tolist()]
     iterations = [int(value) for value in details.iterations.detach().cpu().tolist()]
-    operator_matvecs = [
-        int(value) for value in details.operator_matvecs.detach().cpu().tolist()
-    ]
+    operator_matvecs = [int(value) for value in details.operator_matvecs.detach().cpu().tolist()]
     preconditioner_applications = [
         int(value) for value in details.preconditioner_applications.detach().cpu().tolist()
     ]
@@ -1327,16 +1319,13 @@ def run_internal_task(
                 torch.max(torch.abs(prediction.mean - tera_prediction.mean)).detach().cpu()
             )
             maxabs_latent_variance = float(
-                torch.max(
-                    torch.abs(prediction.latent_variance - tera_prediction.latent_variance)
-                )
+                torch.max(torch.abs(prediction.latent_variance - tera_prediction.latent_variance))
                 .detach()
                 .cpu()
             )
             same_m_tolerance = SAME_M_ABSOLUTE_TOLERANCE[config.dtype]
             same_m_pass = bool(
-                maxabs_mean <= same_m_tolerance
-                and maxabs_latent_variance <= same_m_tolerance
+                maxabs_mean <= same_m_tolerance and maxabs_latent_variance <= same_m_tolerance
             )
             orbit_arm["same_m_agreement_to_TERA_50"] = {
                 "maxabs_mean": maxabs_mean,

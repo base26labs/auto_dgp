@@ -34,10 +34,7 @@ class InternalOptimizerTask:
     def dataset_stem(self) -> str:
         """Return the exact frozen-corpus stem generated for this task."""
 
-        return (
-            f"nbody_fixedmass_n{self.n_particles}_d{self.n_dims}"
-            f"_replica{self.replica}"
-        )
+        return f"nbody_fixedmass_n{self.n_particles}_d{self.n_dims}_replica{self.replica}"
 
     def as_record(self) -> dict[str, int | str]:
         """Return a JSON-safe record including the derived dataset stem."""

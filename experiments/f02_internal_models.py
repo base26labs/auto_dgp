@@ -142,7 +142,9 @@ class ScalarPrediction:
             if not math.isfinite(float(floor)) or float(floor) <= 0.0:
                 raise ValueError("released variance epsilon floor must be finite and positive")
             if inactive is not True:
-                raise ValueError("a returned prediction must certify the released floor is inactive")
+                raise ValueError(
+                    "a returned prediction must certify the released floor is inactive"
+                )
 
 
 def _ensure_released_tera_available() -> None:

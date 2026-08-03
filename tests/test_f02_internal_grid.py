@@ -88,9 +88,7 @@ def test_pilot_and_dataset_stems_are_exact() -> None:
         "seed": 11,
         "dataset_stem": "nbody_fixedmass_n2_d3_replica0",
     }
-    assert {
-        task.dataset_stem for task in OPTIMIZER_SELECTION_TASKS
-    } == {
+    assert {task.dataset_stem for task in OPTIMIZER_SELECTION_TASKS} == {
         f"nbody_fixedmass_n{particles}_d3_replica{replica}"
         for replica in DEVELOPMENT_REPLICAS
         for particles in PARTICLE_COUNTS
@@ -193,10 +191,10 @@ def test_slurm_harness_locks_scientific_and_audit_invariants() -> None:
     assert batch.index("ACTUAL_CATALOG_SHA256") < batch.index("DATASET_PATH=")
     assert "--evaluation-split validation" in batch
     assert "--evaluation-design optimizer_selection" in batch
-    assert "--train-steps \"${TRAIN_STEPS}\"" in batch
+    assert '--train-steps "${TRAIN_STEPS}"' in batch
     assert "--train-epochs 0" in batch
     assert "--kernel rbf" in batch
-    assert "--seed \"${SEED}\"" in batch
+    assert '--seed "${SEED}"' in batch
     assert "--batch-size 256" in batch
     assert "--candidate-m none" in batch
     assert "--dtype float32" in batch
@@ -232,6 +230,6 @@ def test_submit_helper_is_safe_by_default_and_pilot_needs_explicit_submit() -> N
     assert "ARRAY_SPEC=0-134%${MAX_PARALLEL}" in source
     assert "--test-only" in source
     assert "submit)" in source
-    assert "mkdir -p \"${RUN_ROOT}\"" in source
+    assert 'mkdir -p "${RUN_ROOT}"' in source
     assert "Only --submit queues work" in help_result.stdout
     assert "--submit --pilot" in help_result.stdout

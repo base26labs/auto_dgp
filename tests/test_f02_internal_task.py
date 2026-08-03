@@ -280,9 +280,9 @@ def test_default_primary_validation_is_train_only_and_json_serializable(
         "inactive": True,
         "failure_policy": "equality-to-floor-fails-before-scoring",
     }
-    assert result["arms"]["ORBIT-75"]["analytic_resources"]["per_target"][0][
-        "operator_matvecs"
-    ] == 4
+    assert (
+        result["arms"]["ORBIT-75"]["analytic_resources"]["per_target"][0]["operator_matvecs"] == 4
+    )
     assert result["training"]["fit_seconds_descriptive"] >= 0.0
     assert result["training"]["optimizer_updates"] == 20
     assert result["training"]["effective_batch_size"] == 75
@@ -573,13 +573,17 @@ def _ready_catalog(identity: task.BundleIdentity) -> dict:
             task_index = len(bundles)
             stem = f"nbody_fixedmass_n{n_particles}_d3_replica{replica}"
             selected = replica == 0 and n_particles == 2
-            dataset_path = identity.dataset_path if selected else identity.dataset_path.parent / f"{stem}.npz"
+            dataset_path = (
+                identity.dataset_path if selected else identity.dataset_path.parent / f"{stem}.npz"
+            )
             metadata_path = dataset_path.with_suffix(".metadata.json")
             manifest_path = dataset_path.with_suffix(".sha256.json")
             bundles.append(
                 {
                     "task_index": task_index,
-                    "phase": "development" if replica in task.F02_DEVELOPMENT_REPLICAS else "confirmatory",
+                    "phase": "development"
+                    if replica in task.F02_DEVELOPMENT_REPLICAS
+                    else "confirmatory",
                     "replica": replica,
                     "n_particles": n_particles,
                     "n_dims": 3,
@@ -601,9 +605,7 @@ def _ready_catalog(identity: task.BundleIdentity) -> dict:
                             else f"{2000 + task_index:064x}"
                         ),
                         "sha256_manifest_file_sha256": (
-                            identity.manifest_sha256
-                            if selected
-                            else f"{3000 + task_index:064x}"
+                            identity.manifest_sha256 if selected else f"{3000 + task_index:064x}"
                         ),
                         "dataset_content_sha256": f"{4000 + task_index:064x}",
                     },
@@ -765,9 +767,10 @@ def test_same_m_control_uses_dtype_threshold_and_fails_closed(
         catalog_path=tmp_path / "catalog.json",
         config=replace(task_config, dtype="float64"),
     )
-    assert float64_result["arms"]["ORBIT-50"]["same_m_agreement_to_TERA_50"][
-        "absolute_tolerance"
-    ] == 1e-6
+    assert (
+        float64_result["arms"]["ORBIT-50"]["same_m_agreement_to_TERA_50"]["absolute_tolerance"]
+        == 1e-6
+    )
 
     original = task.predict_orbit
 
