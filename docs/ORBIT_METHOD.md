@@ -239,7 +239,11 @@ never silently default to zero.  ORBIT's current API therefore reports
 
 ## 4. What is and is not new
 
-The strongest defensible framing is **matrix-free, computation-aware TERA**:
+The strongest defensible framing is **matrix-free, computation-aware TERA**.  We are not aware of
+prior work combining TERA's target-specific sufficient gradient statistics, an exact structured
+matrix-free application of their function-conditioned covariance, and a per-factor
+residual-to-expected-KL stopping diagnostic.  That search result is not proof of priority, so the
+claim is stated as this TERA-specific synthesis rather than as an unconditional "first":
 
 - TERA-specific exact orthonormal coordinates and a structured matrix-free realization of its local
   Schur complement;
@@ -251,9 +255,12 @@ The following are prior art and must not be claimed as new:
 
 - iterative derivative-GP inference and structured derivative-kernel matrix-vector products
   ([Eriksson et al., 2018](https://proceedings.neurips.cc/paper/2018/hash/c2f32522a84d5e6357e6abac087f1b0b-Abstract.html),
-  [de Roos et al., 2021](https://proceedings.mlr.press/v139/de-roos21a.html));
+  [de Roos et al., 2021](https://proceedings.mlr.press/v139/de-roos21a.html),
+  [Ament and Gomes, 2022](https://proceedings.mlr.press/v162/ament22a.html));
 - computational uncertainty for iterative GP inference
-  ([Wenger et al., 2022](https://proceedings.neurips.cc/paper_files/paper/2022/hash/4683beb6bab325650db13afd05d1a14a-Abstract-Conference.html));
+  ([Bartels and Hennig, 2020](https://jmlr.org/papers/v21/18-473.html),
+  [Reid et al., 2020](https://arxiv.org/abs/2008.03225),
+  [Wenger et al., 2022](https://proceedings.neurips.cc/paper_files/paper/2022/hash/4683beb6bab325650db13afd05d1a14a-Abstract-Conference.html));
 - general goal-oriented or information-theoretic Gaussian observation reduction
   ([Spantini et al., 2017](https://arxiv.org/abs/1607.01881),
   [Giraldi et al., 2017](https://arxiv.org/abs/1709.06606));

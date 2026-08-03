@@ -114,3 +114,23 @@ uv run python cluster/aggregate_f01_orbit.py \
   --expected-seeds 42,1000045,2000048,3000051,4000054 \
   --out runs/f01_orbit_cluster/job-<array-job-id>/aggregate.json
 ```
+
+## F02 frozen N-body corpora
+
+`cluster/f02_nbody_data.sbatch` generates the companion corpora declared in
+`docs/F02_NBODY_PROTOCOL.md`.  Data generation is deterministic and its wall time is never a benchmark
+metric, so these CPU tasks need not occupy the exclusive GPU nodes used for model comparisons.  The
+default 65-task grid is three development plus ten confirmatory replicas at five particle counts:
+
+```bash
+export F02_REPO_ROOT=/projects/lucasbao/tengcc/auto_dgp2
+export F02_PYTHON=/projects/lucasbao/tengcc/auto_dgp2/.venv/bin/python
+export F02_DATA_DIR=/projects/lucasbao/tengcc/datasets/f02_nbody_v1
+sbatch cluster/f02_nbody_data.sbatch
+```
+
+Every task refuses a dirty source tree and refuses to overwrite any existing bundle.  It records the
+commit/tree/submodule and source hashes, then writes one NPZ/metadata/SHA bundle plus a task result.
+Set `F02_VERIFY_EXISTING=1` only to revalidate already frozen artifacts; this mode does not regenerate
+them.  The predictive jobs must consume the aggregated catalog and preserve the corpus source IDs and
+the protocol's label-independent temporal slice.

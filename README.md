@@ -53,6 +53,7 @@ uv run python experiments/nbody_benchmark.py
 | `gp/orbit` | ORBIT research candidate; matrix-free TERA conditionals and certificates |
 | `data/get_nbody.py` | N-body Hamiltonian dataset generator |
 | `data/generate_nbody_confirmatory.py` | leakage-free, fixed-mass, trajectory-grouped companion corpus |
+| `data/load_nbody_confirmatory.py` | fail-closed bundle verification and train-only preparation |
 | `experiments/` | benchmarks and experiments |
 | `tests/` | correctness tests (the factored kernel matvec == dense, CG == exact) |
 | `CLAUDE.md` | the research-loop rules and hygiene checklist |

@@ -40,6 +40,11 @@ Each run writes:
 - `<stem>.sha256.json`: SHA-256 hashes for both data and metadata. Verify it with
   `verify_sha256_manifest(...)` before a run.
 
+For model experiments, use `data.load_nbody_confirmatory.load_prepared_confirmatory_bundle(...)`.
+It fails closed unless the checksum manifest, NPZ, metadata, config, split groups, train-only
+normalization, and physical validation report agree, and it returns read-only normalized arrays with
+source row and trajectory/time identifiers intact.
+
 ## Frozen evaluation invariants
 
 - Splits are deterministic and group-disjoint: no trajectory occurs in more than one of train,
@@ -52,3 +57,7 @@ Each run writes:
   split partitions, or finite-difference disagreement with the analytic gradient.
 - Freeze the NPZ, metadata, checksum manifest, and split seeds before inspecting confirmatory test
   scores. The legacy corpus remains unchanged and should be reported separately.
+
+F02's predeclared, label-independent temporal design and predictive claim gates are fixed in
+`docs/F02_NBODY_PROTOCOL.md`.  The loader retains the complete corpus; the experiment layer selects
+the same declared `time_index` values for every method and preserves the corresponding source IDs.
