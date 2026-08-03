@@ -7,6 +7,30 @@ scope downgrades are reported in place, loudly, naming the check that failed.
 
 ---
 
+## 2026-08-03 — F02b numerical calibration: **matrix predeclared, execution blocked**
+
+No calibration job has been submitted.  `F02B_NUMERICAL_CALIBRATION_v1` predeclares 45 fixed-budget
+fit tasks and 122 reusable-fit probe tasks over development replicas `0,1,2`, all five dimensions,
+three optimizer seeds, the `m=50` reference, a seed-11 `m={20,75,100,150,200}` resource sweep, and
+two independent-allocation replays.  Its literal fit, probe, and combined matrix hashes are
+`e53cabcb...513e`, `b729e755...ae7c`, and `d81aee9b...0114`.  All 100 primary validation inputs enter
+the label-independent geometry scan; expensive support64 solves are selected only by predeclared
+rank-boundary guard strata.
+
+The design fixes absolute and scale-normalized mean/variance errors, projector metrics, exact-zero
+rank semantics, physical-constraint spectral residuals with an analytic roundoff diagnostic, solver
+tolerance sweeps, a full-q precision decomposition, higher-precision RBF fixtures, replica-2 holdout
+handling, and family-wise maximum gates.  The earlier job 2810629 errors are explicitly excluded from
+threshold fitting.  Discovery thresholds may be proposed only from independent error bounds and must
+separate registered faults; confirmatory replicas `101..110` remain unopened.
+
+The committed grid and pure metrics are not an execution authorization.  Fit/probe runners, strict
+schemas and aggregators, high-precision fixtures, and exclusive-L40S Slurm recipes must be completed
+and tested first.  Every aggregate remains `freeze_ready=false` until a separate review binds its
+artifacts into a frozen F02b protocol.
+
+---
+
 ## 2026-08-03 — F02b fixed-geometry oracle diagnostic: **exploratory decomposition only**
 
 This development-only diagnostic does **not** pass N0, N1, or N2 and does not revive the terminated
