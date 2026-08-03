@@ -4,6 +4,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 import torch
 
 from experiments.f02_internal_models import (
@@ -23,6 +24,7 @@ from experiments.f02_same_m_diagnostic import (
     _scalar_scores,
     _singular_spectra,
     _support64_prediction_set,
+    _validate_source_checkout,
 )
 
 
@@ -64,6 +66,39 @@ def test_help_does_not_load_data_or_fit_a_model() -> None:
     )
     assert result.returncode == 0, result.stderr
     assert "development-only" in result.stdout.lower()
+
+
+def test_source_checkout_binding_requires_exact_clean_commit(monkeypatch, tmp_path: Path) -> None:
+    commit = "a" * 40
+    tree = "b" * 40
+
+    def clean_git(_root, *arguments, **_kwargs):
+        responses = {
+            ("rev-parse", "HEAD"): f"{commit}\n",
+            ("rev-parse", "HEAD^{tree}"): f"{tree}\n",
+            ("status", "--porcelain=v1", "--untracked-files=all"): "",
+        }
+        return responses[arguments]
+
+    monkeypatch.setattr("experiments.f02_same_m_diagnostic._run_git", clean_git)
+    assert _validate_source_checkout(commit, repo_root=tmp_path) == {
+        "commit": commit,
+        "tree": tree,
+    }
+
+    with pytest.raises(ValueError, match="full lowercase"):
+        _validate_source_checkout("A" * 40, repo_root=tmp_path)
+    with pytest.raises(RuntimeError, match="expected"):
+        _validate_source_checkout("c" * 40, repo_root=tmp_path)
+
+    def dirty_git(_root, *arguments, **_kwargs):
+        if arguments[0] == "status":
+            return "?? unexpected.txt\n"
+        return clean_git(_root, *arguments, **_kwargs)
+
+    monkeypatch.setattr("experiments.f02_same_m_diagnostic._run_git", dirty_git)
+    with pytest.raises(RuntimeError, match="globally clean"):
+        _validate_source_checkout(commit, repo_root=tmp_path)
 
 
 def test_singular_spectrum_reports_current_numerical_rank() -> None:

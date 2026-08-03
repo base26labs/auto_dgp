@@ -38,8 +38,10 @@ from experiments.f02_internal_task import (
     InternalTaskConfig,
     _authorize_evaluation_phase,
     _bundle_identity,
+    _collect_provenance,
     _fit_kwargs,
     _preflight_bundle_identity,
+    _run_git,
     _selected_bundle,
     save_internal_result,
     validate_catalog_identity,
@@ -52,6 +54,30 @@ from experiments.f02_support_dense_oracle import (
 from gp.orbit import build_local_geometry_from_differences
 
 DIAGNOSTIC_SCHEMA_VERSION = "f02_same_m_diagnostic_v3"
+
+
+def _validate_source_checkout(expected_commit: str, *, repo_root: Path) -> dict[str, str]:
+    """Require a clean checkout at the exact source commit named by the job."""
+
+    if len(expected_commit) != 40 or any(
+        character not in "0123456789abcdef" for character in expected_commit
+    ):
+        raise ValueError("expected_commit must be a full lowercase Git commit SHA-1")
+    commit = str(_run_git(repo_root, "rev-parse", "HEAD")).strip()
+    tree = str(_run_git(repo_root, "rev-parse", "HEAD^{tree}")).strip()
+    status = str(
+        _run_git(
+            repo_root,
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=all",
+        )
+    ).strip()
+    if commit != expected_commit:
+        raise RuntimeError(f"source checkout is {commit}, expected {expected_commit}")
+    if status:
+        raise RuntimeError("source checkout must be globally clean before diagnostic execution")
+    return {"commit": commit, "tree": tree}
 
 
 def _comparison(reference: ScalarPrediction, candidate: ScalarPrediction) -> dict[str, Any]:
@@ -613,9 +639,11 @@ def run_diagnostic(
     train_steps: int = 20,
     seed: int = 11,
     device: str = "cuda",
+    expected_commit: str,
 ) -> dict[str, Any]:
     """Run the registered development-only same-m diagnostic."""
 
+    source_checkout = _validate_source_checkout(expected_commit, repo_root=_IMPORT_ROOT)
     config = InternalTaskConfig(
         train_steps=train_steps,
         seed=seed,
@@ -803,6 +831,17 @@ def run_diagnostic(
     )
     expected_physical_rank = max(0, min(fixed_neighbours.shape[1], train32.X.shape[1] - 6))
     physical_rank_aligned = bool((support_ranks == expected_physical_rank).all().item())
+    provenance = _collect_provenance(
+        bundle,
+        config,
+        repo_root=_IMPORT_ROOT,
+    )
+    if provenance["git"]["commit"] != source_checkout["commit"]:
+        raise RuntimeError("source commit changed during diagnostic execution")
+    if provenance["git"]["tree"] != source_checkout["tree"]:
+        raise RuntimeError("source tree changed during diagnostic execution")
+    if provenance["git"]["status_porcelain"]:
+        raise RuntimeError("source checkout became dirty during diagnostic execution")
 
     result = {
         "schema_version": DIAGNOSTIC_SCHEMA_VERSION,
@@ -930,6 +969,7 @@ def run_diagnostic(
             "task_index": authorization.bundle_entry.get("task_index"),
         },
         "registered_config": asdict(config),
+        "provenance": provenance,
     }
     save_internal_result(result, output_path)
     return result
@@ -943,6 +983,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--train-steps", type=int, choices=(20, 50, 100), default=20)
     parser.add_argument("--seed", type=int, choices=(11, 29, 47), default=11)
     parser.add_argument("--device", default="cuda")
+    parser.add_argument("--expected-commit", required=True)
     return parser
 
 
@@ -955,6 +996,7 @@ def main(argv: list[str] | None = None) -> int:
         train_steps=args.train_steps,
         seed=args.seed,
         device=args.device,
+        expected_commit=args.expected_commit,
     )
     return 0
 
