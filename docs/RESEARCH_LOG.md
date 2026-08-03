@@ -25,8 +25,10 @@ every TERA, ORBIT, and independent support64 arm.  Native promoted-fp64 KNN happ
 same order and sets on this coordinate, but that observation is not generalized to near-tie cases.
 The frozen source-fp32 rank rule retained rank 6 for every support64 and ORBIT arm, matching the six
 known center-of-mass and total-momentum constraints.  The retained/discarded singular-value boundary
-gap ranged from `112.5` to `2.86e5`; nevertheless, rank 6 is not called an N0 pass because the gap,
-constraint-residual, and perturbation-stability thresholds remain TBD.
+gap in source-quantized fp64 geometry ranged from `112.5` to `2.86e5` (the fp32 minimum was
+`107.7`), but the smallest retained `s6/cutoff` ratio was only `1.255`.  Rank 6 is therefore not
+called an N0 pass: the gap, cutoff-margin, constraint-residual, and perturbation-stability thresholds
+remain TBD.
 
 The rank bookkeeping also exposes an important precision boundary.  Native fp32 classified all
 discarded modes as unresolved, whereas native fp64 resolved rank 12 for every target.  ORBIT64
@@ -54,12 +56,13 @@ fp32 request beyond its numerical floor is therefore not a viable repair.
 Tracing the released dense baseline separates most of the original discrepancy from ORBIT's
 iterative stopping rule.  TERA32 escalated its q-coordinate jitter to `1e-5` on 7 targets and
 `1e-4` on 13 targets, while its function-coordinate jitter stayed at `1e-8`; TERA64 used `1e-8` for
-both on every target.  The base support64/TERA32 discrepancy was `0.180658` in mean and
-`9.07684e-4` in variance.  Recomputing support64 with each target's actual TERA32 function and q
-jitters reduced those maxima to `0.0106929` and `3.09038e-5`, shrinkage factors of about 16.9 and
-29.4.  No matched support solve re-escalated its requested jitter.  Thus adaptive q regularization
-explains most, but not all, of the fp32 difference; the remainder is consistent with fp32 dense
-factorization/coordinate arithmetic but is not isolated by this artifact alone.
+both on every target.  Base support64 agreed with ORBIT64 to `3.14941e-10`; ORBIT64 versus TERA32
+differed by `0.180658` in mean and `9.07684e-4` in variance.  Recomputing support64 with each
+target's actual TERA32 function and q jitters reduced the worst-case maxima to `0.0106929` and
+`3.09038e-5`, ratios of maxima of about 16.9 and 29.4.  No matched support solve re-escalated its
+requested jitter.  Thus adaptive q regularization explains most, but not all, of the fp32
+difference; remaining full-q fp32 assembly, rule-discarded-complement leakage, factorization, and
+solve effects are not apportioned by this artifact.
 
 F02b remains a draft and confirmatory labels remain locked.  Before freezing it, development
 calibration must span dimensions, neighbourhood sizes, seeds, and rank boundaries; add
