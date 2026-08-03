@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
+import sys
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -22,6 +24,19 @@ _GENERATION = {
 }
 _COMMIT = "1" * 40
 _TREE = "2" * 40
+
+
+def test_aggregate_cli_is_importable_outside_repo(tmp_path: Path) -> None:
+    script = Path(__file__).parents[1] / "cluster/aggregate_f02_nbody_data.py"
+    result = subprocess.run(
+        [sys.executable, str(script), "--help"],
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "Offline, provenance-strict" in result.stdout
 
 
 def _sha256(path: Path) -> str:

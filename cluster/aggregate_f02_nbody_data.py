@@ -13,12 +13,17 @@ import argparse
 import hashlib
 import json
 import os
+import sys
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from cluster.generate_f02_nbody import GenerationTask, generation_tasks
 from data.generate_nbody_confirmatory import ConfirmatoryConfig
