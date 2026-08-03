@@ -157,3 +157,26 @@ bash cluster/submit_f02_internal_optimizer.sh --submit           # all 135, %1 b
 
 The pilot is exactly replica 0, two particles, 20 optimizer updates, and seed 11.  Passing `--pilot`
 never weakens the explicit-submit guard: without `--submit`, it only preflights that one-task array.
+
+Aggregate by declaring the scheduler population explicitly.  The aggregator never infers the
+population from successful result files, and a pilot can validate its one task but cannot select an
+optimizer budget:
+
+```bash
+python cluster/aggregate_f02_internal_optimizer.py \
+  runs/f02_internal_optimizer/job-<array-job-id> \
+  --expected-task-indices 0 \
+  --out runs/f02_internal_optimizer/job-<array-job-id>/pilot-aggregate.json
+
+python cluster/aggregate_f02_internal_optimizer.py \
+  runs/f02_internal_optimizer/job-<array-job-id> \
+  --expected-task-indices 0-134 \
+  --out runs/f02_internal_optimizer/job-<array-job-id>/aggregate.json
+```
+
+Only an analysis-ready `0-134` aggregate can set `selected_update`.  Selection uses TERA-50 scalar
+RMSE only: within each seed/corpus it averages the 20 trajectory MSE values and then takes one square
+root, averages those rooted values over seeds `11,29,47`, and finally gives equal weight to the 15
+replica-dimension corpora.  NLL never enters update selection, and a numerically exact macro-RMSE tie
+goes to fewer optimizer updates.  Missing, failed, invalid, duplicate, and unexpected task
+directories remain in task accounting instead of being silently dropped.
