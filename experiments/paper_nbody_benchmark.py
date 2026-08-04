@@ -29,6 +29,7 @@ import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from statistics import NormalDist
 from typing import Any
 
 import numpy as np
@@ -46,7 +47,7 @@ from experiments.f02_internal_models import (
 from gp.exact import gaussian_nll
 from gp.metrics import rmse
 
-SCHEMA = "paper_nbody_benchmark_task_v3"
+SCHEMA = "paper_nbody_benchmark_task_v4"
 PAPER_REFERENCE = "https://arxiv.org/abs/2505.09134"
 PAPER_PARTICLES = (4, 6, 8, 10)
 PAPER_SEEDS = (6535, 8830, 92357)
@@ -63,7 +64,9 @@ TERA_TRAIN_EPOCHS = 1
 TERA_BATCH_SIZE = 256
 TERA_LEARNING_RATE = 0.01
 ORBIT_EXPANSION_M = 30
-ORBIT_GUARD_LATENT_SIGMA = 0.02
+ORBIT_GUARD_TRUST_RADIUS_SIGMA = 0.02
+ORBIT_GUARD_FAMILYWISE_ALPHA = 0.01
+ORBIT_GUARD_VARIANCE_ROUNDOFF_MULTIPLIER = 128.0
 ORBIT_CG_TOLERANCE = 1e-10
 ORBIT_CG_MAX_ITERATIONS = 4096
 PREDICTION_DTYPE = torch.float64
@@ -84,6 +87,16 @@ class PreparedPaperSplit:
     normalization: dict[str, Any]
     train_indices: tuple[int, ...]
     test_indices: tuple[int, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class GuardedExpansionDiagnostics:
+    use_expanded: torch.Tensor
+    normalized_mean_shift: torch.Tensor
+    posterior_innovation_z: torch.Tensor
+    variance_is_nested: torch.Tensor
+    familywise_innovation_z_threshold: float
+    variance_roundoff_floor: torch.Tensor
 
 
 TASKS = tuple(
@@ -293,35 +306,80 @@ def _prediction_metrics(
     }
 
 
+def posterior_innovation_z_threshold(
+    target_count: int,
+    *,
+    familywise_alpha: float = ORBIT_GUARD_FAMILYWISE_ALPHA,
+) -> float:
+    """Two-sided Bonferroni threshold for nested-posterior innovations."""
+
+    if type(target_count) is not int or target_count <= 0:
+        raise ValueError("target_count must be a positive integer")
+    if not math.isfinite(familywise_alpha) or not 0.0 < familywise_alpha < 1.0:
+        raise ValueError("familywise_alpha must be in (0, 1)")
+    tail_probability = familywise_alpha / (2.0 * target_count)
+    return NormalDist().inv_cdf(1.0 - tail_probability)
+
+
 def _guarded_expansion(
     base: ScalarPrediction,
     base_gradient: torch.Tensor,
     expanded: ScalarPrediction,
     expanded_gradient: torch.Tensor,
     *,
-    threshold: float = ORBIT_GUARD_LATENT_SIGMA,
-) -> tuple[ScalarPrediction, torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Select expanded local conditionals only under posterior agreement.
+    trust_radius_sigma: float = ORBIT_GUARD_TRUST_RADIUS_SIGMA,
+    familywise_alpha: float = ORBIT_GUARD_FAMILYWISE_ALPHA,
+) -> tuple[ScalarPrediction, torch.Tensor, GuardedExpansionDiagnostics]:
+    """Select expanded nested conditionals under two label-free safety guards.
 
-    The guard is label-free.  It treats neighbour membership and the boolean
-    branch as piecewise constant, just as the TERA gradient path treats nearest
-    neighbour selection.  Each returned gradient therefore belongs to the
-    scalar local posterior selected at that target.
+    The trust radius limits the update relative to the base posterior scale.
+    The second guard checks the nesting identity and the standardized posterior
+    innovation under a fixed family-wise error rate.  Neighbour membership and
+    the boolean branch remain piecewise constant for the reported gradient.
     """
 
-    if not math.isfinite(threshold) or threshold <= 0.0:
-        raise ValueError("guard threshold must be finite and positive")
+    if not math.isfinite(trust_radius_sigma) or trust_radius_sigma <= 0.0:
+        raise ValueError("guard trust radius must be finite and positive")
     if base.mean.shape != expanded.mean.shape or base_gradient.shape != expanded_gradient.shape:
         raise ValueError("base and expanded predictions must have matching shapes")
-    if base_gradient.ndim != 2 or base_gradient.shape[0] != base.mean.shape[0]:
-        raise ValueError("mean gradients must have shape (n, d)")
-    if not bool(torch.isfinite(base.latent_variance).all()) or bool(
-        (base.latent_variance <= 0.0).any()
+    if (
+        base.mean.ndim != 1
+        or base_gradient.ndim != 2
+        or base_gradient.shape[0] != base.mean.shape[0]
     ):
-        raise ValueError("base latent variance must be finite and positive")
+        raise ValueError("mean gradients must have shape (n, d)")
+    variance_tensors = (base.latent_variance, expanded.latent_variance)
+    if any(item.shape != base.mean.shape for item in variance_tensors) or any(
+        not bool(torch.isfinite(item).all()) or bool((item <= 0.0).any())
+        for item in variance_tensors
+    ):
+        raise ValueError("base and expanded latent variances must be finite and positive")
 
-    normalized_disagreement = (expanded.mean - base.mean).abs() / torch.sqrt(base.latent_variance)
-    use_expanded = normalized_disagreement <= threshold
+    mean_shift = (expanded.mean - base.mean).abs()
+    normalized_mean_shift = mean_shift / torch.sqrt(base.latent_variance)
+    variance_reduction = base.latent_variance - expanded.latent_variance
+    variance_scale = torch.maximum(
+        base.latent_variance.abs(),
+        expanded.latent_variance.abs(),
+    ).clamp_min(1.0)
+    variance_roundoff_floor = (
+        ORBIT_GUARD_VARIANCE_ROUNDOFF_MULTIPLIER
+        * torch.finfo(variance_scale.dtype).eps
+        * variance_scale
+    )
+    variance_is_nested = variance_reduction >= -variance_roundoff_floor
+    posterior_innovation_z = mean_shift / torch.sqrt(
+        variance_reduction.clamp_min(variance_roundoff_floor)
+    )
+    innovation_threshold = posterior_innovation_z_threshold(
+        base.mean.shape[0],
+        familywise_alpha=familywise_alpha,
+    )
+    use_expanded = (
+        (normalized_mean_shift <= trust_radius_sigma)
+        & variance_is_nested
+        & (posterior_innovation_z <= innovation_threshold)
+    )
     candidate = ScalarPrediction(
         mean=torch.where(use_expanded, expanded.mean, base.mean),
         latent_variance=torch.where(
@@ -340,7 +398,15 @@ def _guarded_expansion(
         expanded_gradient,
         base_gradient,
     )
-    return candidate, candidate_gradient, use_expanded, normalized_disagreement
+    diagnostics = GuardedExpansionDiagnostics(
+        use_expanded=use_expanded,
+        normalized_mean_shift=normalized_mean_shift,
+        posterior_innovation_z=posterior_innovation_z,
+        variance_is_nested=variance_is_nested,
+        familywise_innovation_z_threshold=innovation_threshold,
+        variance_roundoff_floor=variance_roundoff_floor,
+    )
+    return candidate, candidate_gradient, diagnostics
 
 
 def _tera_resource_summary(m: int) -> dict[str, Any]:
@@ -470,18 +536,22 @@ def _orbit_resource_summary(
 def _guarded_resource_summary(
     base_resources: dict[str, Any],
     expanded_resources: dict[str, Any],
-    use_expanded: torch.Tensor,
+    diagnostics: GuardedExpansionDiagnostics,
 ) -> dict[str, Any]:
     """Charge both sequential conditionals used by the label-free guard."""
 
     return {
-        "schema": "orbit_guarded_expansion_proxy_v1",
+        "schema": "orbit_guarded_expansion_proxy_v2",
         "base_m": TERA_PREDICT_M,
         "expanded_m": ORBIT_EXPANSION_M,
-        "guard_latent_sigma_threshold": ORBIT_GUARD_LATENT_SIGMA,
-        "expanded_target_count": int(use_expanded.sum()),
-        "fallback_target_count": int((~use_expanded).sum()),
-        "expanded_target_fraction": float(use_expanded.double().mean()),
+        "guard_trust_radius_sigma": ORBIT_GUARD_TRUST_RADIUS_SIGMA,
+        "guard_familywise_alpha": ORBIT_GUARD_FAMILYWISE_ALPHA,
+        "guard_familywise_innovation_z_threshold": (diagnostics.familywise_innovation_z_threshold),
+        "guard_variance_roundoff_multiplier": ORBIT_GUARD_VARIANCE_ROUNDOFF_MULTIPLIER,
+        "expanded_target_count": int(diagnostics.use_expanded.sum()),
+        "fallback_target_count": int((~diagnostics.use_expanded).sum()),
+        "expanded_target_fraction": float(diagnostics.use_expanded.double().mean()),
+        "non_nested_target_count": int((~diagnostics.variance_is_nested).sum()),
         "state_accounting": "sequential_component_maximum",
         "flop_accounting": "sum_of_both_component_proxies",
         "counted_state_elements_maximum": max(
@@ -606,7 +676,7 @@ def run_task(repo_root: Path, task: PaperBenchmarkTask) -> dict[str, Any]:
     orbit_same_gradient = prediction_records["ORBIT-20"][1]
     orbit_expanded = prediction_records["ORBIT-30-raw"][0]
     orbit_expanded_gradient = prediction_records["ORBIT-30-raw"][1]
-    candidate, candidate_gradient, use_expanded, normalized_disagreement = _guarded_expansion(
+    candidate, candidate_gradient, guard_diagnostics = _guarded_expansion(
         orbit_same,
         orbit_same_gradient,
         orbit_expanded,
@@ -626,7 +696,7 @@ def run_task(repo_root: Path, task: PaperBenchmarkTask) -> dict[str, Any]:
     candidate_resources = _guarded_resource_summary(
         base_resources,
         expanded_resources,
-        use_expanded,
+        guard_diagnostics,
     )
 
     arms = {
@@ -647,11 +717,22 @@ def run_task(repo_root: Path, task: PaperBenchmarkTask) -> dict[str, Any]:
             ),
             "analytic_resources": candidate_resources,
             "guard": {
-                "definition": "abs(mean_30-mean_20)/sqrt(latent_variance_20) <= threshold",
-                "latent_sigma_threshold": ORBIT_GUARD_LATENT_SIGMA,
-                "expanded_target_count": int(use_expanded.sum()),
-                "fallback_target_count": int((~use_expanded).sum()),
-                "maximum_normalized_disagreement": float(normalized_disagreement.max()),
+                "definition": "trust radius AND nested variance AND family-wise posterior innovation",
+                "trust_radius_sigma": ORBIT_GUARD_TRUST_RADIUS_SIGMA,
+                "familywise_alpha": ORBIT_GUARD_FAMILYWISE_ALPHA,
+                "familywise_innovation_z_threshold": (
+                    guard_diagnostics.familywise_innovation_z_threshold
+                ),
+                "variance_roundoff_multiplier": ORBIT_GUARD_VARIANCE_ROUNDOFF_MULTIPLIER,
+                "expanded_target_count": int(guard_diagnostics.use_expanded.sum()),
+                "fallback_target_count": int((~guard_diagnostics.use_expanded).sum()),
+                "non_nested_target_count": int((~guard_diagnostics.variance_is_nested).sum()),
+                "maximum_normalized_mean_shift": float(
+                    guard_diagnostics.normalized_mean_shift.max()
+                ),
+                "maximum_posterior_innovation_z": float(
+                    guard_diagnostics.posterior_innovation_z.max()
+                ),
             },
         },
     }
@@ -715,8 +796,12 @@ def run_task(repo_root: Path, task: PaperBenchmarkTask) -> dict[str, Any]:
             "candidate": "ORBIT-G30",
             "candidate_base_m": TERA_PREDICT_M,
             "candidate_expanded_m": ORBIT_EXPANSION_M,
-            "candidate_guard_latent_sigma": ORBIT_GUARD_LATENT_SIGMA,
-            "candidate_hypothesis": "ORBIT-G30 improves value RMSE, value NLL, and gradient RMSE over TERA-20 while paying for both guarded conditionals under both analytic resource proxies",
+            "candidate_guard_trust_radius_sigma": ORBIT_GUARD_TRUST_RADIUS_SIGMA,
+            "candidate_guard_familywise_alpha": ORBIT_GUARD_FAMILYWISE_ALPHA,
+            "candidate_guard_variance_roundoff_multiplier": (
+                ORBIT_GUARD_VARIANCE_ROUNDOFF_MULTIPLIER
+            ),
+            "candidate_hypothesis": "ORBIT-G30 improves mean value RMSE, value NLL, and gradient RMSE over TERA-20 using a trust-radius and nested-posterior innovation guard while paying for both conditionals",
         },
         "learned_parameters": _parameters_record(parameters),
         "fit_seconds_descriptive_only": fit_seconds,
@@ -774,7 +859,7 @@ def write_result(output_root: Path, task: PaperBenchmarkTask, result: dict[str, 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--task-index", type=int, required=True)
-    parser.add_argument("--output-root", type=Path, default=Path("runs/paper_nbody_v3"))
+    parser.add_argument("--output-root", type=Path, default=Path("runs/paper_nbody_v4"))
     args = parser.parse_args()
 
     torch.set_num_threads(8)

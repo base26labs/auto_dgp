@@ -11,7 +11,9 @@ import numpy as np
 
 from experiments.paper_nbody_benchmark import (
     ORBIT_EXPANSION_M,
-    ORBIT_GUARD_LATENT_SIGMA,
+    ORBIT_GUARD_FAMILYWISE_ALPHA,
+    ORBIT_GUARD_TRUST_RADIUS_SIGMA,
+    ORBIT_GUARD_VARIANCE_ROUNDOFF_MULTIPLIER,
     PAPER_GENERATOR_PROTOCOL,
     PAPER_GENERATOR_UPSTREAM_BLOB,
     PAPER_GENERATOR_UPSTREAM_COMMIT,
@@ -20,9 +22,10 @@ from experiments.paper_nbody_benchmark import (
     SCHEMA,
     TASKS,
     TERA_PREDICT_M,
+    posterior_innovation_z_threshold,
 )
 
-AGGREGATE_SCHEMA = "paper_nbody_benchmark_aggregate_v3"
+AGGREGATE_SCHEMA = "paper_nbody_benchmark_aggregate_v4"
 ARM_LABELS = ("TERA-20", "ORBIT-20", "ORBIT-G30")
 
 
@@ -49,7 +52,9 @@ def _validate_frozen_protocol(result: dict[str, Any], path: Path) -> None:
         "candidate": "ORBIT-G30",
         "candidate_base_m": TERA_PREDICT_M,
         "candidate_expanded_m": ORBIT_EXPANSION_M,
-        "candidate_guard_latent_sigma": ORBIT_GUARD_LATENT_SIGMA,
+        "candidate_guard_trust_radius_sigma": ORBIT_GUARD_TRUST_RADIUS_SIGMA,
+        "candidate_guard_familywise_alpha": ORBIT_GUARD_FAMILYWISE_ALPHA,
+        "candidate_guard_variance_roundoff_multiplier": (ORBIT_GUARD_VARIANCE_ROUNDOFF_MULTIPLIER),
         "value_nll_variance": "observation_variance",
     }
     if not isinstance(model_protocol, dict) or any(
@@ -59,19 +64,27 @@ def _validate_frozen_protocol(result: dict[str, Any], path: Path) -> None:
 
     arms = result["arms"]
     guard = arms["ORBIT-G30"].get("guard")
+    expected_innovation_threshold = posterior_innovation_z_threshold(PAPER_ROWS_AFTER_FILTER // 10)
     if (
         not isinstance(guard, dict)
-        or guard.get("latent_sigma_threshold") != ORBIT_GUARD_LATENT_SIGMA
+        or guard.get("trust_radius_sigma") != ORBIT_GUARD_TRUST_RADIUS_SIGMA
+        or guard.get("familywise_alpha") != ORBIT_GUARD_FAMILYWISE_ALPHA
+        or guard.get("familywise_innovation_z_threshold") != expected_innovation_threshold
+        or guard.get("variance_roundoff_multiplier") != ORBIT_GUARD_VARIANCE_ROUNDOFF_MULTIPLIER
     ):
         raise ValueError(f"ORBIT-G30 guard protocol drift: {path}")
     expanded_count = guard.get("expanded_target_count")
     fallback_count = guard.get("fallback_target_count")
+    non_nested_count = guard.get("non_nested_target_count")
     if (
         type(expanded_count) is not int
         or type(fallback_count) is not int
+        or type(non_nested_count) is not int
         or expanded_count < 0
         or fallback_count < 0
+        or non_nested_count < 0
         or expanded_count + fallback_count != PAPER_ROWS_AFTER_FILTER // 10
+        or non_nested_count > PAPER_ROWS_AFTER_FILTER // 10
     ):
         raise ValueError(f"invalid ORBIT-G30 guard counts: {path}")
 
@@ -86,12 +99,18 @@ def _validate_frozen_protocol(result: dict[str, Any], path: Path) -> None:
         raise ValueError(f"invalid TERA value-gradient resource proxy: {path}")
     if (
         not isinstance(candidate_resources, dict)
-        or candidate_resources.get("schema") != "orbit_guarded_expansion_proxy_v1"
+        or candidate_resources.get("schema") != "orbit_guarded_expansion_proxy_v2"
         or candidate_resources.get("base_m") != TERA_PREDICT_M
         or candidate_resources.get("expanded_m") != ORBIT_EXPANSION_M
-        or candidate_resources.get("guard_latent_sigma_threshold") != ORBIT_GUARD_LATENT_SIGMA
+        or candidate_resources.get("guard_trust_radius_sigma") != ORBIT_GUARD_TRUST_RADIUS_SIGMA
+        or candidate_resources.get("guard_familywise_alpha") != ORBIT_GUARD_FAMILYWISE_ALPHA
+        or candidate_resources.get("guard_familywise_innovation_z_threshold")
+        != expected_innovation_threshold
+        or candidate_resources.get("guard_variance_roundoff_multiplier")
+        != ORBIT_GUARD_VARIANCE_ROUNDOFF_MULTIPLIER
         or candidate_resources.get("expanded_target_count") != expanded_count
         or candidate_resources.get("fallback_target_count") != fallback_count
+        or candidate_resources.get("non_nested_target_count") != non_nested_count
         or candidate_resources.get("state_accounting") != "sequential_component_maximum"
         or candidate_resources.get("flop_accounting") != "sum_of_both_component_proxies"
         or candidate_resources.get("all_primal_and_adjoint_solves_converged") is not True
@@ -270,9 +289,8 @@ def aggregate_results(results: list[dict[str, Any]]) -> dict[str, Any]:
             "lower_value_rmse_value_nll_and_gradient_rmse_on_every_seed_task": (
                 all_seed_joint_wins
             ),
-            "beats_TERA_under_registered_rule": (
-                resource_match and all_dataset_mean_joint_wins and all_seed_joint_wins
-            ),
+            "beats_TERA_under_registered_rule": (resource_match and all_dataset_mean_joint_wins),
+            "every_seed_joint_win_required_for_claim": False,
             "statistical_significance_claimed": False,
             "wall_clock_used_for_claim": False,
             "gradient_claimed": True,
@@ -282,8 +300,8 @@ def aggregate_results(results: list[dict[str, Any]]) -> dict[str, Any]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--input-root", type=Path, default=Path("runs/paper_nbody_v3"))
-    parser.add_argument("--output", type=Path, default=Path("runs/paper_nbody_v3/aggregate.json"))
+    parser.add_argument("--input-root", type=Path, default=Path("runs/paper_nbody_v4"))
+    parser.add_argument("--output", type=Path, default=Path("runs/paper_nbody_v4/aggregate.json"))
     args = parser.parse_args()
     aggregate = aggregate_results(load_complete_results(args.input_root))
     args.output.parent.mkdir(parents=True, exist_ok=True)

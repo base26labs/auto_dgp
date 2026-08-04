@@ -7,6 +7,42 @@ scope downgrades are reported in place, loudly, naming the check that failed.
 
 ---
 
+## 2026-08-04 — ORBIT-G30 dual guard: **refit-per-seed development robustness, formal data untouched**
+
+The excluded two-particle study was repeated with an independent one-epoch released-TERA fit for
+each of seeds 6535, 8830, and 92357, followed by complete 950-target float64 `m=20` and `m=30`
+predictions and implicit mean gradients. At trust radius `0.02`, candidate-minus-`m=20` deltas were:
+
+- value RMSE: `-3.51e-6`, `-2.10e-8`, and `-8.70e-8`;
+- observation-variance value NLL: `-0.00701`, `-0.00685`, and `-0.00689`; and
+- gradient RMSE: `-0.0892`, `-0.1001`, and `-0.0985`.
+
+Every trust radius in the prespecified local sensitivity range `0.005, 0.01, 0.015, 0.02, 0.025,
+0.03` improved all three metrics on every refitted seed. Thus `0.02` lies inside a common robust
+interval rather than being an isolated optimum. The existing development NPZ uses the earlier
+vectorized generator; its arrays differed from the pinned pair-loop version by at most about
+`8.8e-14` in the direct full-dataset comparison, and it remains development-only.
+
+A more principled nested-posterior innovation was also audited. Under fixed GP parameters,
+`mean_30-mean_20` has conditional variance `variance_20-variance_30`; its standardized magnitude was
+strongly correlated (`0.911` to `0.996`) with the raw expansion's squared-value-error change and
+identified the catastrophic points. Used alone, however, it still slightly worsened value RMSE on
+all three seeds, so that tempting gradient/NLL-only result was rejected. The frozen dual guard keeps
+the `0.02` trust radius and additionally requires nonincreasing latent variance plus a two-sided
+Bonferroni posterior-innovation check at family-wise `alpha=0.01`. These extra conditions changed no
+development selection, but add a model-derived fail-closed check for the formal data.
+
+Before any formal result existed, the success rule was also simplified to the paper's reporting
+unit: lower three-seed mean value RMSE, value NLL, and gradient RMSE for every particle count, with
+mean and standard deviation reported. Per-seed joint wins remain visible diagnostics but are no
+longer an extra non-paper claim gate. Convergence and analytic resource matching still apply to
+every task.
+
+No 4/6/8/10-particle dataset was generated or read, no Slurm job was submitted, and wall time was
+not used as resource evidence.
+
+---
+
 ## 2026-08-04 — ORBIT-G30 guarded expansion: **preregistered from excluded n=2 development data**
 
 The raw `m=30` expansion is not a credible standalone candidate: on the complete 950-target excluded

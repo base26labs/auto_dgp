@@ -20,6 +20,7 @@ from experiments.paper_nbody_benchmark import (
     SCHEMA,
     TASKS,
     _guarded_expansion,
+    posterior_innovation_z_threshold,
     prepare_paper_arrays,
     task_for_index,
 )
@@ -87,6 +88,7 @@ def test_slurm_entry_is_shared_8cpu_without_gpu_or_exclusive() -> None:
 
 
 def test_paper_aggregate_reports_the_registered_joint_win(tmp_path: Path) -> None:
+    innovation_threshold = posterior_innovation_z_threshold(PAPER_ROWS_AFTER_FILTER // 10)
     for task in TASKS:
         result = {
             "schema": SCHEMA,
@@ -123,17 +125,25 @@ def test_paper_aggregate_reports_the_registered_joint_win(tmp_path: Path) -> Non
                     "value_nll_variance": "observation_variance",
                     "gradient_rmse": 2.9,
                     "guard": {
-                        "latent_sigma_threshold": 0.02,
+                        "trust_radius_sigma": 0.02,
+                        "familywise_alpha": 0.01,
+                        "familywise_innovation_z_threshold": innovation_threshold,
+                        "variance_roundoff_multiplier": 128.0,
                         "expanded_target_count": 900,
                         "fallback_target_count": PAPER_ROWS_AFTER_FILTER // 10 - 900,
+                        "non_nested_target_count": 0,
                     },
                     "analytic_resources": {
-                        "schema": "orbit_guarded_expansion_proxy_v1",
+                        "schema": "orbit_guarded_expansion_proxy_v2",
                         "base_m": 20,
                         "expanded_m": 30,
-                        "guard_latent_sigma_threshold": 0.02,
+                        "guard_trust_radius_sigma": 0.02,
+                        "guard_familywise_alpha": 0.01,
+                        "guard_familywise_innovation_z_threshold": innovation_threshold,
+                        "guard_variance_roundoff_multiplier": 128.0,
                         "expanded_target_count": 900,
                         "fallback_target_count": PAPER_ROWS_AFTER_FILTER // 10 - 900,
+                        "non_nested_target_count": 0,
                         "state_accounting": "sequential_component_maximum",
                         "flop_accounting": "sum_of_both_component_proxies",
                         "all_primal_and_adjoint_solves_converged": True,
@@ -154,7 +164,9 @@ def test_paper_aggregate_reports_the_registered_joint_win(tmp_path: Path) -> Non
                 "candidate": "ORBIT-G30",
                 "candidate_base_m": 20,
                 "candidate_expanded_m": 30,
-                "candidate_guard_latent_sigma": 0.02,
+                "candidate_guard_trust_radius_sigma": 0.02,
+                "candidate_guard_familywise_alpha": 0.01,
+                "candidate_guard_variance_roundoff_multiplier": 128.0,
                 "value_nll_variance": "observation_variance",
             },
             "raw_ORBIT_30_diagnostic_not_an_assessment_arm": {
@@ -178,33 +190,65 @@ def test_paper_aggregate_reports_the_registered_joint_win(tmp_path: Path) -> Non
             json.dumps(result, sort_keys=True)
         )
 
-    aggregate = aggregate_results(load_complete_results(tmp_path))
+    results = load_complete_results(tmp_path)
+    results[0]["arms"]["ORBIT-G30"].update(
+        value_rmse=1.1,
+        value_nll=2.1,
+        gradient_rmse=3.1,
+    )
+    aggregate = aggregate_results(results)
     assert aggregate["candidate_assessment"]["beats_TERA_under_registered_rule"] is True
+    assert (
+        aggregate["candidate_assessment"][
+            "lower_value_rmse_value_nll_and_gradient_rmse_on_every_seed_task"
+        ]
+        is False
+    )
+    assert aggregate["candidate_assessment"]["every_seed_joint_win_required_for_claim"] is False
     assert aggregate["task_count"] == 12
 
     first_path = tmp_path / "task-000.json"
     drifted = json.loads(first_path.read_text())
-    drifted["arms"]["ORBIT-G30"]["guard"]["latent_sigma_threshold"] = 0.03
+    drifted["arms"]["ORBIT-G30"]["guard"]["trust_radius_sigma"] = 0.03
     first_path.write_text(json.dumps(drifted, sort_keys=True))
     with pytest.raises(ValueError, match="guard protocol drift"):
         load_complete_results(tmp_path)
 
 
 def test_guarded_expansion_falls_back_on_large_posterior_disagreement() -> None:
-    variance = torch.tensor([0.01, 0.01], dtype=torch.float64)
-    base = ScalarPrediction(torch.zeros(2), variance, variance + 0.1)
-    expanded = ScalarPrediction(torch.tensor([0.001, 1.0]), variance / 2, variance / 2 + 0.1)
-    base_gradient = torch.zeros(2, 3)
-    expanded_gradient = torch.ones(2, 3)
+    base_variance = torch.tensor([0.01, 0.01, 0.01], dtype=torch.float64)
+    expanded_variance = torch.tensor([0.005, 0.005, 0.011], dtype=torch.float64)
+    base = ScalarPrediction(torch.zeros(3), base_variance, base_variance + 0.1)
+    expanded = ScalarPrediction(
+        torch.tensor([0.001, 1.0, 0.0001]),
+        expanded_variance,
+        expanded_variance + 0.1,
+    )
+    base_gradient = torch.zeros(3, 3)
+    expanded_gradient = torch.ones(3, 3)
 
-    candidate, gradient, use_expanded, disagreement = _guarded_expansion(
+    candidate, gradient, diagnostics = _guarded_expansion(
         base,
         base_gradient,
         expanded,
         expanded_gradient,
     )
 
-    assert use_expanded.tolist() == [True, False]
-    torch.testing.assert_close(candidate.mean, torch.tensor([0.001, 0.0]))
-    torch.testing.assert_close(gradient, torch.tensor([[1.0, 1.0, 1.0], [0.0, 0.0, 0.0]]))
-    torch.testing.assert_close(disagreement, torch.tensor([0.01, 10.0], dtype=torch.float64))
+    assert diagnostics.use_expanded.tolist() == [True, False, False]
+    assert diagnostics.variance_is_nested.tolist() == [True, True, False]
+    assert diagnostics.familywise_innovation_z_threshold > 2.0
+    torch.testing.assert_close(candidate.mean, torch.tensor([0.001, 0.0, 0.0]))
+    torch.testing.assert_close(
+        gradient,
+        torch.tensor(
+            [
+                [1.0, 1.0, 1.0],
+                [0.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0],
+            ]
+        ),
+    )
+    torch.testing.assert_close(
+        diagnostics.normalized_mean_shift,
+        torch.tensor([0.01, 10.0, 0.001], dtype=torch.float64),
+    )
