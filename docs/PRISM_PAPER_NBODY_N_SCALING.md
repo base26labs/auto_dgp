@@ -1,6 +1,6 @@
 # PRISM-GP N-scaling benchmark
 
-Status: **frozen before N-scaling execution**.
+Status: **complete; protocol frozen before N-scaling execution**.
 
 The independent PRISM confirmation varied particle count at fixed corpus size, giving the
 dimension sweep `D={24,36,48,60}` recorded in
@@ -33,3 +33,18 @@ No statistical-significance claim is made.
 shared `short` node allocation, one task, exactly 8 CPUs, no GPU, no exclusive allocation, and no
 oversubscription. Shared-node wall clock is descriptive only and is never cost or performance
 evidence. Aggregate with `python -m experiments.paper_nbody_prism_n_aggregate`.
+
+## Result
+
+All 12 shared 8-CPU tasks completed. The paired mean deltas `(value RMSE, value NLL, gradient
+RMSE)` were:
+
+- `N=1000`: `(+1.23e-11, -1.86e-8, +6.30e-11)`—effectively identical predictions;
+- `N=2000`: `(+1.89e-8, +1.28e-5, -1.53e-5)`—a small NLL/gradient tradeoff;
+- `N=4000`: `(-1.11e-9, -1.50e-4, +9.25e-5)`—a small NLL/gradient tradeoff; and
+- `N=8550`: `(+1.29e-8, -8.82e-4, -2.74e-3)`—passes the descriptive Pareto rule.
+
+Value RMSE was noninferior and every solve/resource gate passed at all four sizes, but only the full
+paper training size passed all three metric gates. The full-N prediction arrays are byte-identical
+to the corresponding D-scaling confirmation arrays. Complete hashes are recorded in
+`releases/paper_nbody_prism_n_scaling_5977517.json`.

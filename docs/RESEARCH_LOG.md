@@ -1,5 +1,23 @@
 # Research log
 
+## 2026-08-04 — PRISM-GP N-scaling benchmark: **complete; advantage emerges at full paper N**
+
+After the independent dimension sweep, shared 8-CPU job `2815036` evaluated fixed `D=60` at nested
+training sizes `N={1000,2000,4000,8550}` across the three paper split seeds. All 12 tasks completed
+without GPU, exclusivity, or oversubscription. The complete 950-row test split remained fixed within
+each seed, and the method configuration was unchanged.
+
+At `N=1000`, PRISM and TERA were numerically indistinguishable. At `N=2000`, PRISM reduced gradient
+RMSE by `1.53e-5` but increased NLL by `1.28e-5`; at `N=4000`, it reduced NLL by `1.50e-4` but
+increased gradient RMSE by `9.25e-5`. At the full paper size `N=8550`, it reduced NLL by
+`8.82e-4` and gradient RMSE by `2.74e-3`, while remaining value-RMSE noninferior. Thus only full N
+passes the retained descriptive Pareto rule. All sizes pass convergence and resource gates; maximum
+operation/state ratios to TERA-20 are `0.74997` and `0.119063`.
+
+This is a secondary benchmark on an already evaluated corpus, not a new confirmatory claim. Its
+aggregate SHA-256 is `b0392544507d1aab4a9250ce01eef46c2dd08039ab505cbcc9e0b6e93ca78b67`;
+complete hashes are in `releases/paper_nbody_prism_n_scaling_5977517.json`.
+
 ## 2026-08-04 — PRISM-GP seed-43 confirmation: **passes the frozen paper-style rule**
 
 The protocol was committed at `b66f60e` before the independent data existed. Shared 8-CPU data job
