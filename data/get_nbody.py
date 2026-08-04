@@ -240,6 +240,12 @@ if __name__ == "__main__":
         help="Percentile threshold for gradient filtering (default: 95.0)",
     )
     parser.add_argument("--seed", type=int, default=42, help="Random seed (default: 42)")
+    parser.add_argument(
+        "--output-file",
+        type=str,
+        default=None,
+        help="Optional explicit NPZ path (default: nbody/nbody_nN_dD.npz)",
+    )
 
     args = parser.parse_args()
 
@@ -314,16 +320,15 @@ if __name__ == "__main__":
     print(f"  Max:    {grad_norms_filtered.max():.4f}")
     print("=" * 50)
 
-    # Create nbody directory if it doesn't exist
+    # Create the destination directory if it doesn't exist.
     import os
 
-    os.makedirs("nbody", exist_ok=True)
-
-    # Create filename with n_particles and n_dims
-    filename_base = f"nbody_n{args.n_particles}_d{args.n_dims}"
-
-    # Save dataset
-    output_file = f"nbody/{filename_base}.npz"
+    output_file = args.output_file or f"nbody/nbody_n{args.n_particles}_d{args.n_dims}.npz"
+    output_parent = os.path.dirname(output_file)
+    if output_parent:
+        os.makedirs(output_parent, exist_ok=True)
+    if os.path.exists(output_file):
+        raise FileExistsError(f"refusing to overwrite dataset: {output_file}")
     np.savez(
         output_file,
         X=X,  # Full states
@@ -333,6 +338,7 @@ if __name__ == "__main__":
         generator_upstream_repository=UPSTREAM_REPOSITORY,
         generator_upstream_commit=UPSTREAM_COMMIT,
         generator_upstream_get_nbody_blob=UPSTREAM_GET_NBODY_BLOB,
+        generator_seed=args.seed,
         **info,
     )
     print(f"Saved dataset to {output_file}")

@@ -1,5 +1,25 @@
 # Research log
 
+## 2026-08-04 — PRISM-GP-30/16 development: **passes development Pareto gate; independent confirmation frozen**
+
+The formal paper N-body v4 result at source commit `076315e` falsified ORBIT-G30. A mechanism audit
+found that float64 prediction treated relative spectral modes near the float32 source precision as
+new directions. PRISM-GP instead uses the source-precision numerical rank, a maximum expanded rank
+of 16, a guarded `m=30` expansion from the native `m=20` TERA conditional, and one selected implicit
+adjoint. Focused unit tests and formatting checks passed on the cluster.
+
+Shared 8-CPU jobs `2814233` and `2814286` were development probes. Job `2814461` ran tasks 0-3 and
+job `2814517` ran the frozen tasks 4-11 at commit `ac971a4`; all completed without GPU, exclusivity,
+or oversubscription. Across three paper split seeds, PRISM reduced mean observation-variance NLL and
+gradient RMSE at every particle count. Mean value-RMSE deltas were between `-2.58e-8` and `+8.81e-7`,
+and every task passed convergence and the TERA-20 analytic resource envelopes. This already-read
+seed-42 corpus is development evidence only.
+
+The independent seed-43 protocol and its `1e-4` value-RMSE noninferiority margin are frozen in
+`docs/PRISM_PAPER_NBODY_CONFIRMATION.md` before corpus generation. Confirmation additionally
+requires strictly lower mean NLL and gradient RMSE for every particle count, plus resource and solve
+gates on every task. Wall clock on shared CPU nodes remains descriptive only.
+
 The single narrative doc.  Historical numbers below were reported from
 `experiments/nbody_benchmark.py`, but the referenced `runs/nbody_benchmark.json` artifact is absent
 from the current checkout.  They are therefore not independently reproducible here.  Retractions and
