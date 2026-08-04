@@ -6,7 +6,7 @@ training configuration.  ORBIT consumes the exact same fitted kernel state:
 
 * TERA-20 is the released dense local baseline;
 * ORBIT-20 is the same-neighbour numerical control; and
-* ORBIT-30 is the preregistered resource-expansion hypothesis.
+* ORBIT-G30 is the guarded resource-expansion hypothesis.
 
 The benchmark evaluates the complete paper test split.  Wall-clock values are
 descriptive only because execution is on shared CPU nodes.  Analytic operation
@@ -46,19 +46,24 @@ from experiments.f02_internal_models import (
 from gp.exact import gaussian_nll
 from gp.metrics import rmse
 
-SCHEMA = "paper_nbody_benchmark_task_v2"
+SCHEMA = "paper_nbody_benchmark_task_v3"
 PAPER_REFERENCE = "https://arxiv.org/abs/2505.09134"
 PAPER_PARTICLES = (4, 6, 8, 10)
 PAPER_SEEDS = (6535, 8830, 92357)
 PAPER_ROWS_AFTER_FILTER = 9500
 TRAIN_FRACTION = 0.9
+PAPER_GENERATOR_PROTOCOL = "dsoftki_released_pair_loop_nbody_v1"
+PAPER_GENERATOR_UPSTREAM_REPOSITORY = "https://github.com/base26labs/dsoftki_gp"
+PAPER_GENERATOR_UPSTREAM_COMMIT = "286234baa0dd6be225bbfb1bdbb416687ea70654"
+PAPER_GENERATOR_UPSTREAM_BLOB = "32f23c8c0f7263ef03026d4a3d34920ea3364cdc"
 
 TERA_TRAIN_M = 20
 TERA_PREDICT_M = 20
 TERA_TRAIN_EPOCHS = 1
 TERA_BATCH_SIZE = 256
 TERA_LEARNING_RATE = 0.01
-ORBIT_CANDIDATE_M = 30
+ORBIT_EXPANSION_M = 30
+ORBIT_GUARD_LATENT_SIGMA = 0.02
 ORBIT_CG_TOLERANCE = 1e-10
 ORBIT_CG_MAX_ITERATIONS = 4096
 PREDICTION_DTYPE = torch.float64
@@ -201,11 +206,30 @@ def load_paper_task_data(
     if not path.is_file():
         raise FileNotFoundError(f"paper N-body dataset is missing: {path}")
     with np.load(path, allow_pickle=False) as record:
-        required = {"X", "E", "F", "n_particles", "n_dims"}
+        required = {
+            "X",
+            "E",
+            "F",
+            "n_particles",
+            "n_dims",
+            "generator_protocol",
+            "generator_upstream_repository",
+            "generator_upstream_commit",
+            "generator_upstream_get_nbody_blob",
+        }
         if not required.issubset(record.files):
             raise ValueError(f"dataset is missing keys: {sorted(required - set(record.files))}")
         if int(record["n_particles"]) != task.n_particles or int(record["n_dims"]) != 3:
             raise ValueError("dataset particle/dimension metadata does not match the task")
+        expected_generator = {
+            "generator_protocol": PAPER_GENERATOR_PROTOCOL,
+            "generator_upstream_repository": PAPER_GENERATOR_UPSTREAM_REPOSITORY,
+            "generator_upstream_commit": PAPER_GENERATOR_UPSTREAM_COMMIT,
+            "generator_upstream_get_nbody_blob": PAPER_GENERATOR_UPSTREAM_BLOB,
+        }
+        for key, expected in expected_generator.items():
+            if str(record[key].item()) != expected:
+                raise ValueError(f"dataset {key} does not match the pinned paper generator")
         x = np.array(record["X"], copy=True)
         value = np.array(record["E"], copy=True)
         gradient = np.array(record["F"], copy=True)
@@ -269,12 +293,67 @@ def _prediction_metrics(
     }
 
 
+def _guarded_expansion(
+    base: ScalarPrediction,
+    base_gradient: torch.Tensor,
+    expanded: ScalarPrediction,
+    expanded_gradient: torch.Tensor,
+    *,
+    threshold: float = ORBIT_GUARD_LATENT_SIGMA,
+) -> tuple[ScalarPrediction, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Select expanded local conditionals only under posterior agreement.
+
+    The guard is label-free.  It treats neighbour membership and the boolean
+    branch as piecewise constant, just as the TERA gradient path treats nearest
+    neighbour selection.  Each returned gradient therefore belongs to the
+    scalar local posterior selected at that target.
+    """
+
+    if not math.isfinite(threshold) or threshold <= 0.0:
+        raise ValueError("guard threshold must be finite and positive")
+    if base.mean.shape != expanded.mean.shape or base_gradient.shape != expanded_gradient.shape:
+        raise ValueError("base and expanded predictions must have matching shapes")
+    if base_gradient.ndim != 2 or base_gradient.shape[0] != base.mean.shape[0]:
+        raise ValueError("mean gradients must have shape (n, d)")
+    if not bool(torch.isfinite(base.latent_variance).all()) or bool(
+        (base.latent_variance <= 0.0).any()
+    ):
+        raise ValueError("base latent variance must be finite and positive")
+
+    normalized_disagreement = (expanded.mean - base.mean).abs() / torch.sqrt(base.latent_variance)
+    use_expanded = normalized_disagreement <= threshold
+    candidate = ScalarPrediction(
+        mean=torch.where(use_expanded, expanded.mean, base.mean),
+        latent_variance=torch.where(
+            use_expanded,
+            expanded.latent_variance,
+            base.latent_variance,
+        ),
+        observation_variance=torch.where(
+            use_expanded,
+            expanded.observation_variance,
+            base.observation_variance,
+        ),
+    )
+    candidate_gradient = torch.where(
+        use_expanded[:, None],
+        expanded_gradient,
+        base_gradient,
+    )
+    return candidate, candidate_gradient, use_expanded, normalized_disagreement
+
+
 def _tera_resource_summary(m: int) -> dict[str, Any]:
+    dense_state = m**4
+    dense_cholesky_flops = (m**6) / 3.0
     return {
-        "schema": "tera_dense_local_v1",
+        "schema": "tera_dense_value_gradient_proxy_v2",
         "m": m,
-        "explicit_reduced_covariance_elements_per_target": m**4,
-        "reduced_cholesky_leading_flops_per_target": (m**6) / 3.0,
+        "explicit_reduced_covariance_elements_per_target": dense_state,
+        "reduced_cholesky_leading_flops_per_target": dense_cholesky_flops,
+        "value_gradient_safety_multiplier": 4,
+        "counted_value_gradient_state_elements_per_target": 4 * dense_state,
+        "counted_value_gradient_flops_per_target": 4 * dense_cholesky_flops,
     }
 
 
@@ -388,6 +467,46 @@ def _orbit_resource_summary(
     }
 
 
+def _guarded_resource_summary(
+    base_resources: dict[str, Any],
+    expanded_resources: dict[str, Any],
+    use_expanded: torch.Tensor,
+) -> dict[str, Any]:
+    """Charge both sequential conditionals used by the label-free guard."""
+
+    return {
+        "schema": "orbit_guarded_expansion_proxy_v1",
+        "base_m": TERA_PREDICT_M,
+        "expanded_m": ORBIT_EXPANSION_M,
+        "guard_latent_sigma_threshold": ORBIT_GUARD_LATENT_SIGMA,
+        "expanded_target_count": int(use_expanded.sum()),
+        "fallback_target_count": int((~use_expanded).sum()),
+        "expanded_target_fraction": float(use_expanded.double().mean()),
+        "state_accounting": "sequential_component_maximum",
+        "flop_accounting": "sum_of_both_component_proxies",
+        "counted_state_elements_maximum": max(
+            base_resources["counted_state_elements_maximum"],
+            expanded_resources["counted_state_elements_maximum"],
+        ),
+        "counted_flops_mean_per_target": (
+            base_resources["counted_flops_mean_per_target"]
+            + expanded_resources["counted_flops_mean_per_target"]
+        ),
+        "counted_flops_maximum_per_target": (
+            base_resources["counted_flops_maximum_per_target"]
+            + expanded_resources["counted_flops_maximum_per_target"]
+        ),
+        "all_primal_and_adjoint_solves_converged": (
+            base_resources["all_primal_and_adjoint_solves_converged"]
+            and expanded_resources["all_primal_and_adjoint_solves_converged"]
+        ),
+        "components": {
+            "ORBIT-20": base_resources,
+            "ORBIT-30-raw": expanded_resources,
+        },
+    }
+
+
 def _parameters_record(parameters: FrozenTERAParameters) -> dict[str, Any]:
     return {
         "lengthscale": [float(item) for item in parameters.lengthscale.detach().cpu()],
@@ -461,7 +580,7 @@ def run_task(repo_root: Path, task: PaperBenchmarkTask) -> dict[str, Any]:
     )
     for label, m in (
         ("ORBIT-20", TERA_PREDICT_M),
-        ("ORBIT-30", ORBIT_CANDIDATE_M),
+        ("ORBIT-30-raw", ORBIT_EXPANSION_M),
     ):
         started = time.perf_counter()
         prediction = predict_orbit(
@@ -485,33 +604,77 @@ def run_task(repo_root: Path, task: PaperBenchmarkTask) -> dict[str, Any]:
     tera_prediction = prediction_records["TERA-20"][0]
     orbit_same = prediction_records["ORBIT-20"][0]
     orbit_same_gradient = prediction_records["ORBIT-20"][1]
+    orbit_expanded = prediction_records["ORBIT-30-raw"][0]
+    orbit_expanded_gradient = prediction_records["ORBIT-30-raw"][1]
+    candidate, candidate_gradient, use_expanded, normalized_disagreement = _guarded_expansion(
+        orbit_same,
+        orbit_same_gradient,
+        orbit_expanded,
+        orbit_expanded_gradient,
+    )
     tera_resources = _tera_resource_summary(TERA_PREDICT_M)
+    base_resources = _orbit_resource_summary(
+        orbit_same,
+        TERA_PREDICT_M,
+        task.dimension,
+    )
+    expanded_resources = _orbit_resource_summary(
+        orbit_expanded,
+        ORBIT_EXPANSION_M,
+        task.dimension,
+    )
+    candidate_resources = _guarded_resource_summary(
+        base_resources,
+        expanded_resources,
+        use_expanded,
+    )
 
-    arms: dict[str, Any] = {}
-    for label, (prediction, mean_gradient, seconds) in prediction_records.items():
-        arm = _prediction_metrics(prediction, mean_gradient, test.value, test.gradient)
-        arm["prediction_seconds_descriptive_only"] = seconds
-        if label == "TERA-20":
-            arm["analytic_resources"] = tera_resources
-        else:
-            arm["analytic_resources"] = _orbit_resource_summary(
-                prediction,
-                TERA_PREDICT_M if label == "ORBIT-20" else ORBIT_CANDIDATE_M,
-                task.dimension,
-            )
-        arms[label] = arm
+    arms = {
+        "TERA-20": {
+            **_prediction_metrics(tera_prediction, tera_gradient, test.value, test.gradient),
+            "prediction_seconds_descriptive_only": prediction_records["TERA-20"][2],
+            "analytic_resources": tera_resources,
+        },
+        "ORBIT-20": {
+            **_prediction_metrics(orbit_same, orbit_same_gradient, test.value, test.gradient),
+            "prediction_seconds_descriptive_only": prediction_records["ORBIT-20"][2],
+            "analytic_resources": base_resources,
+        },
+        "ORBIT-G30": {
+            **_prediction_metrics(candidate, candidate_gradient, test.value, test.gradient),
+            "prediction_seconds_descriptive_only": (
+                prediction_records["ORBIT-20"][2] + prediction_records["ORBIT-30-raw"][2]
+            ),
+            "analytic_resources": candidate_resources,
+            "guard": {
+                "definition": "abs(mean_30-mean_20)/sqrt(latent_variance_20) <= threshold",
+                "latent_sigma_threshold": ORBIT_GUARD_LATENT_SIGMA,
+                "expanded_target_count": int(use_expanded.sum()),
+                "fallback_target_count": int((~use_expanded).sum()),
+                "maximum_normalized_disagreement": float(normalized_disagreement.max()),
+            },
+        },
+    }
 
-    candidate_resources = arms["ORBIT-30"]["analytic_resources"]
     resource_match = {
         "state_proxy_within_TERA_20": (
             candidate_resources["counted_state_elements_maximum"]
-            <= tera_resources["explicit_reduced_covariance_elements_per_target"]
+            <= tera_resources["counted_value_gradient_state_elements_per_target"]
         ),
         "maximum_flop_proxy_within_TERA_20": (
             candidate_resources["counted_flops_maximum_per_target"]
-            <= tera_resources["reduced_cholesky_leading_flops_per_target"]
+            <= tera_resources["counted_value_gradient_flops_per_target"]
         ),
     }
+    raw_expansion_diagnostic = _prediction_metrics(
+        orbit_expanded,
+        orbit_expanded_gradient,
+        test.value,
+        test.gradient,
+    )
+    raw_expansion_diagnostic["prediction_seconds_descriptive_only"] = prediction_records[
+        "ORBIT-30-raw"
+    ][2]
 
     return {
         "schema": SCHEMA,
@@ -524,6 +687,12 @@ def run_task(repo_root: Path, task: PaperBenchmarkTask) -> dict[str, Any]:
             "seed": task.seed,
         },
         "paper_protocol": {
+            "generator": {
+                "protocol": PAPER_GENERATOR_PROTOCOL,
+                "upstream_repository": PAPER_GENERATOR_UPSTREAM_REPOSITORY,
+                "upstream_commit": PAPER_GENERATOR_UPSTREAM_COMMIT,
+                "upstream_get_nbody_blob": PAPER_GENERATOR_UPSTREAM_BLOB,
+            },
             "rows_after_gradient_filter": PAPER_ROWS_AFTER_FILTER,
             "train_fraction": TRAIN_FRACTION,
             "train_rows": train.X.shape[0],
@@ -543,7 +712,11 @@ def run_task(repo_root: Path, task: PaperBenchmarkTask) -> dict[str, Any]:
             "orbit_cg_max_iterations": ORBIT_CG_MAX_ITERATIONS,
             "gradient_definition": "gradient_of_scalar_posterior_mean",
             "value_nll_variance": "observation_variance",
-            "candidate_hypothesis": "ORBIT-30 improves value RMSE, value NLL, and gradient RMSE over TERA-20 under both analytic resource proxies",
+            "candidate": "ORBIT-G30",
+            "candidate_base_m": TERA_PREDICT_M,
+            "candidate_expanded_m": ORBIT_EXPANSION_M,
+            "candidate_guard_latent_sigma": ORBIT_GUARD_LATENT_SIGMA,
+            "candidate_hypothesis": "ORBIT-G30 improves value RMSE, value NLL, and gradient RMSE over TERA-20 while paying for both guarded conditionals under both analytic resource proxies",
         },
         "learned_parameters": _parameters_record(parameters),
         "fit_seconds_descriptive_only": fit_seconds,
@@ -552,6 +725,7 @@ def run_task(repo_root: Path, task: PaperBenchmarkTask) -> dict[str, Any]:
             {key: float(value) for key, value in row.items()} for row in model.training_history
         ],
         "arms": arms,
+        "raw_ORBIT_30_diagnostic_not_an_assessment_arm": raw_expansion_diagnostic,
         "same_m_control": {
             "maximum_absolute_mean_difference": float(
                 (tera_prediction.mean - orbit_same.mean).abs().max()
@@ -600,7 +774,7 @@ def write_result(output_root: Path, task: PaperBenchmarkTask, result: dict[str, 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--task-index", type=int, required=True)
-    parser.add_argument("--output-root", type=Path, default=Path("runs/paper_nbody_v2"))
+    parser.add_argument("--output-root", type=Path, default=Path("runs/paper_nbody_v3"))
     args = parser.parse_args()
 
     torch.set_num_threads(8)

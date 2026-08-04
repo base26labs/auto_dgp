@@ -281,7 +281,7 @@ def _trusted_operator_lower_bound(
 
     q_jitter = geometry.eigenvalues.new_tensor(reduced_jitter)
     q_jitter_component = q_jitter / geometry.eigenvalues.max()
-    lower_bound = float(gradient_component + q_jitter_component)
+    lower_bound = float((gradient_component + q_jitter_component).detach())
     provenance = (
         f"trusted_gp_builder:{noise_provenance}+"
         "reduced_jitter/max_scaled_difference_eigenvalue;"
@@ -302,7 +302,7 @@ def _trusted_operator_norm_upper_bound(
     the trusted builder's positive-semidefinite kernel assumption.
     """
 
-    floor = float(function_covariance_floor)
+    floor = float(function_covariance_floor.detach())
     provenance = (
         "trusted_gp_builder:block_row_plus_q_frobenius_over_function_floor;"
         "source_dtype_not_directed_rounding"
@@ -324,7 +324,7 @@ def _trusted_operator_norm_upper_bound(
     q_frobenius_squared = (operator.alpha.square() * pair_distance2).sum()
     bound = unconditional_bound + q_frobenius_squared / function_covariance_floor
     bound = bound + abs(operator.jitter)
-    result = float(bound)
+    result = float(bound.detach())
     if not math.isfinite(result) or result <= 0.0:
         return None, provenance + ";unavailable_nonpositive_or_nonfinite_result"
     return result, provenance

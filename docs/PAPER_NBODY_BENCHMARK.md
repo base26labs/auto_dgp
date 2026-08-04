@@ -21,6 +21,11 @@ required before running this benchmark and its pending arrays must not be submit
   energy/gradient scale, with the gradient chain-rule correction. Matching the authors' released
   implementation, normalization is computed before the random split. The exact transformation and
   split indices must be stored with each result.
+- Pin generation to the released pair-loop numerical order in DSoftKI commit
+  `286234baa0dd6be225bbfb1bdbb416687ea70654`, `data/get_nbody.py` blob
+  `32f23c8c0f7263ef03026d4a3d34920ea3364cdc`. The generated NPZ embeds both identities and the
+  benchmark loader rejects missing or mismatched provenance. This matters because a vectorized
+  force reduction changes floating summation order and may diverge along a chaotic trajectory.
 
 ## Comparison and reporting
 
@@ -32,17 +37,25 @@ The registered comparison is deliberately small:
 
 - `TERA-20`: released TERA training and dense prediction at its native `m=20`;
 - `ORBIT-20`: a same-neighbour control using the exact same learned state; and
-- `ORBIT-30`: the fixed resource-expansion hypothesis.
+- `ORBIT-G30`: a guarded expansion that computes both `m=20` and `m=30`, using the expanded
+  conditional only when `|mean_30 - mean_20| / sqrt(latent_variance_20) <= 0.02`.
 
-The candidate succeeds only if `ORBIT-30` has lower value RMSE, observation-variance value NLL, and
+The guard is label-free and its branch is held piecewise constant when reporting the selected scalar
+posterior's gradient. Its `0.02` threshold was fixed using the excluded two-particle development
+dataset before reading any of the four reported paper test sets. The unguarded `m=30` result remains
+a diagnostic, not an assessment arm.
+
+The candidate succeeds only if `ORBIT-G30` has lower value RMSE, observation-variance value NLL, and
 gradient RMSE than `TERA-20` on every seed task and every dataset mean, all primal and adjoint solves
 converge, and its maximum per-target structured state and counted-operation proxies remain within the
-corresponding `TERA-20` dense envelopes. This is a simple deterministic decision rule, not a
-statistical-significance claim. `m=30` is fixed before reading any of the four paper test sets.
-Float64 ORBIT solves use a fixed `1e-10` relative residual tolerance; the resulting primal and
-adjoint iterations are charged to the operation proxy. A conservative factor of four is also charged
-to ORBIT's stored-state and implicit-pullback proxies; these remain analytic proxies rather than
-measured hardware cost.
+corresponding `TERA-20` full-value-gradient dense envelopes. The TERA envelope starts from its
+`m^4` reduced covariance and `m^6/3` leading Cholesky terms, then applies the same conservative
+factor-four reverse-pass allowance used for ORBIT's stored state and implicit pullback. This is a
+simple deterministic decision rule, not a statistical-significance claim. Both `m` values and the
+guard are fixed before reading any reported test set. Float64 ORBIT solves use a fixed `1e-10`
+relative residual tolerance; all primal and adjoint iterations for both conditionals are charged to
+the operation proxy. Peak structured state is the sequential maximum, while operation counts are
+summed. These remain analytic safety proxies rather than measured hardware cost.
 
 The primary table reports value RMSE and gradient RMSE for each particle count as mean and standard
 deviation over the three seeds. Both gradients are defined as the derivative of the scalar posterior
@@ -77,6 +90,13 @@ The implementation is:
 These files define runnable commands but do not authorize `sbatch`. The current checkout must be
 committed and deployed with its environment before any array is submitted, and the ignored `runs/`
 directory must already exist so Slurm can open its log paths.
+
+The launch order, after separate authorization, is intentionally short: verify a clean deployed
+commit and the repository virtual environment; create `runs/`; submit the four-task data array;
+confirm all four arrays have 9,500 rows and the pinned generator metadata; submit the 12-task
+benchmark array; then run `python -m experiments.paper_nbody_aggregate`. The benchmark loader and
+aggregate both fail closed on provenance, guard, NLL-variance, convergence, and resource-accounting
+drift. No step should use an exclusive allocation.
 
 Reference: <https://arxiv.org/abs/2505.09134> and the authors' released benchmark scripts at
 <https://github.com/base26labs/dsoftki_gp>.

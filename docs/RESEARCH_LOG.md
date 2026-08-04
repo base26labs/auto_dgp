@@ -7,6 +7,33 @@ scope downgrades are reported in place, loudly, naming the check that failed.
 
 ---
 
+## 2026-08-04 — ORBIT-G30 guarded expansion: **preregistered from excluded n=2 development data**
+
+The raw `m=30` expansion is not a credible standalone candidate: on the complete 950-target excluded
+two-particle split for seed 6535, rare local failures increased value RMSE from `0.000322888` at
+`m=20` to `0.0424413`, even though gradient RMSE improved from `0.791531` to `0.638605`. This failure
+motivated a label-free trust guard rather than suppressing the diagnostic.
+
+`ORBIT-G30` computes both local conditionals and accepts `m=30` only when
+`|mean_30-mean_20|/sqrt(latent_variance_20) <= 0.02`; otherwise it returns the complete `m=20`
+conditional. The threshold was selected and frozen on the excluded two-particle development setting,
+before any reported 4/6/8/10-particle test set was generated or read. Using one fixed learned-parameter
+snapshot across all three development splits, the guarded arm improved all three metrics on each
+split. The candidate-minus-base deltas for seeds 6535, 8830, and 92357 respectively were:
+
+- value RMSE: `-3.19e-6`, `-1.84e-8`, `-3.82e-8`;
+- observation-variance value NLL: `-0.00702`, `-0.00685`, `-0.00694`; and
+- gradient RMSE: `-0.0891`, `-0.1001`, `-0.0941`.
+
+This is candidate-development evidence, not a paper benchmark result: n=2 is excluded from the
+reported table, the parameter snapshot was not refit per development split, and no statistical claim
+is made. Formal accounting pays for both conditionals, summing their operation proxies and using
+their sequential maximum state. The temporary exact-order dataset matched the pinned upstream
+generator on a direct bitwise small-case check; its full NPZ SHA-256 was
+`74fe4131ae31da7158e384ddb5027a8170f957601b643b662dc563741de48efd`. No Slurm job was submitted.
+
+---
+
 ## 2026-08-04 — Paper N-body v2 full-gradient and NLL path: **implemented locally, not submitted**
 
 The paper-aligned runner now reports both primary N-body metrics, value RMSE and full-gradient RMSE,
