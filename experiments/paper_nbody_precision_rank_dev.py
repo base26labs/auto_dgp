@@ -43,7 +43,7 @@ from gp.orbit.budgeted import predict_budgeted_guarded_marginals
 SCHEMA = "paper_nbody_prism_development_task_v1"
 SOURCE_SCHEMA = "paper_nbody_benchmark_task_v4"
 SOURCE_COMMIT = "076315efdeef4492897651515eaeeed95e8dd863"
-DEVELOPMENT_TASKS = TASKS[:4]
+DEVELOPMENT_TASKS = TASKS
 SOURCE_RANK_EPSILON = torch.finfo(torch.float32).eps
 MAXIMUM_DIRECTION_RANK = 16
 TRUST_RADIUS_SIGMA = 0.025
@@ -208,7 +208,7 @@ def run_task(
     output_root: Path,
 ) -> tuple[dict[str, Any], Path]:
     if task_index < 0 or task_index >= len(DEVELOPMENT_TASKS):
-        raise IndexError("development task index must be in [0, 3]")
+        raise IndexError("development task index must be in [0, 11]")
     if _git(repo_root, "status", "--porcelain=v1", "--untracked-files=all"):
         raise RuntimeError("precision-rank development probe requires a clean repository")
 

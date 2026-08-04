@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#SBATCH --job-name=prism-dev
+#SBATCH --job-name=prism-val
 #SBATCH --account=lucasbao
 #SBATCH --partition=short
 #SBATCH --nodes=1
@@ -7,9 +7,9 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 #SBATCH --time=04:00:00
-#SBATCH --array=0-3%2
-#SBATCH --output=runs/prism-dev-%A_%a.out
-#SBATCH --error=runs/prism-dev-%A_%a.err
+#SBATCH --array=4-11%3
+#SBATCH --output=runs/prism-val-%A_%a.out
+#SBATCH --error=runs/prism-val-%A_%a.err
 
 set -Eeuo pipefail
 umask 027
@@ -37,15 +37,15 @@ if [[ ${SLURM_JOB_PARTITION:-} != short ]]; then
     echo "precision-rank development requires the short partition" >&2
     exit 2
 fi
-if [[ ${SLURM_ARRAY_TASK_COUNT:-} != 4 \
-    || ${SLURM_ARRAY_TASK_MIN:-} != 0 \
-    || ${SLURM_ARRAY_TASK_MAX:-} != 3 \
+if [[ ${SLURM_ARRAY_TASK_COUNT:-} != 8 \
+    || ${SLURM_ARRAY_TASK_MIN:-} != 4 \
+    || ${SLURM_ARRAY_TASK_MAX:-} != 11 \
     || ${SLURM_ARRAY_TASK_STEP:-} != 1 ]]; then
-    echo "precision-rank development requires the exact 0-3 array" >&2
+    echo "PRISM-GP validation requires the exact 4-11 array" >&2
     exit 2
 fi
-if [[ ! ${SLURM_ARRAY_TASK_ID:-} =~ ^[0-3]$ ]]; then
-    echo "invalid precision-rank development task index" >&2
+if [[ ! ${SLURM_ARRAY_TASK_ID:-} =~ ^([4-9]|1[01])$ ]]; then
+    echo "invalid PRISM-GP validation task index" >&2
     exit 2
 fi
 if [[ ! -x ${PYTHON_BIN} ]]; then
