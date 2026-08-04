@@ -136,6 +136,398 @@ def _finite_float_list(value: torch.Tensor, label: str) -> list[float]:
     return [float(item) for item in value.detach().cpu().tolist()]
 
 
+def _require_explicit_compute_dtype(
+    compute_dtype: object,
+    label: str,
+    tensors: Sequence[tuple[torch.Tensor, str]],
+) -> torch.dtype:
+    if compute_dtype not in (torch.float32, torch.float64):
+        raise CalibrationMetricInputError(f"{label} must be torch.float32 or torch.float64")
+    for tensor, tensor_label in tensors:
+        if tensor.dtype != compute_dtype:
+            raise CalibrationMetricInputError(
+                f"{label} must equal the actual dtype of {tensor_label}"
+            )
+    return compute_dtype
+
+
+def _require_same_dtype_and_device(
+    tensors: Sequence[tuple[torch.Tensor, str]],
+) -> None:
+    reference, reference_label = tensors[0]
+    for candidate, candidate_label in tensors[1:]:
+        if candidate.dtype != reference.dtype:
+            raise CalibrationMetricInputError(
+                f"{reference_label} and {candidate_label} must have identical dtypes"
+            )
+        if candidate.device != reference.device:
+            raise CalibrationMetricInputError(
+                f"{reference_label} and {candidate_label} must be on the same device"
+            )
+
+
+def _dtype_name(dtype: torch.dtype) -> str:
+    return str(dtype).removeprefix("torch.")
+
+
+def _stable_vector_norm_2(value: torch.Tensor, label: str) -> torch.Tensor:
+    """Compute a scaled Euclidean norm without avoidable square underflow."""
+
+    scale = torch.max(torch.abs(value))
+    if float(scale) == 0.0:
+        return value.new_zeros(())
+    scaled = value / scale
+    norm = scale * torch.sqrt(torch.sum(scaled * scaled))
+    _finite_float(norm, label)
+    return norm
+
+
+def _dense_solve_error_record(
+    residual: torch.Tensor,
+    rhs: torch.Tensor,
+    solution: torch.Tensor,
+    operator_norm: torch.Tensor,
+    *,
+    residual_compute_dtype: torch.dtype,
+) -> dict[str, Any]:
+    residual_norm = _stable_vector_norm_2(residual, "residual_norm_2")
+    rhs_norm = _stable_vector_norm_2(rhs, "rhs_norm_2")
+    solution_norm = _stable_vector_norm_2(solution, "solution_norm_2")
+    scalars = (
+        (residual_norm, "residual_norm_2"),
+        (rhs_norm, "rhs_norm_2"),
+        (solution_norm, "solution_norm_2"),
+        (operator_norm, "operator_norm_2"),
+    )
+    for value, label in scalars:
+        _finite_float(value, label)
+
+    floor = torch.finfo(residual_compute_dtype).tiny
+    floor_tensor = residual.new_tensor(floor)
+    relative_denominator = torch.maximum(rhs_norm, floor_tensor)
+    backward_scale = operator_norm * solution_norm + rhs_norm
+    _finite_float(backward_scale, "backward_error_scale")
+    backward_denominator = torch.maximum(backward_scale, floor_tensor)
+    relative_residual = residual_norm / relative_denominator
+    backward_error = residual_norm / backward_denominator
+    return {
+        "system_dimension": int(rhs.numel()),
+        "residual_compute_dtype": _dtype_name(residual_compute_dtype),
+        "residual_compute_device": str(residual.device),
+        "normalization_floor": floor,
+        "residual_source": "recomputed_as_b_minus_A_matmul_x",
+        "operator_norm_source": "dense_matrix_spectral_norm",
+        "operator_norm_is_upper_bound": False,
+        "operator_norm_2": _finite_float(operator_norm, "operator_norm_2"),
+        "solution_norm_2": _finite_float(solution_norm, "solution_norm_2"),
+        "rhs_norm_2": _finite_float(rhs_norm, "rhs_norm_2"),
+        "residual_norm_2": _finite_float(residual_norm, "residual_norm_2"),
+        "relative_residual_denominator": _finite_float(
+            relative_denominator,
+            "relative_residual_denominator",
+        ),
+        "backward_error_denominator": _finite_float(
+            backward_denominator,
+            "backward_error_denominator",
+        ),
+        "relative_residual": _finite_float(relative_residual, "relative_residual"),
+        "normwise_backward_error": _finite_float(
+            backward_error,
+            "normwise_backward_error",
+        ),
+    }
+
+
+def dense_solve_error_metrics(
+    A: torch.Tensor,
+    b: torch.Tensor,
+    x: torch.Tensor,
+    *,
+    residual_compute_dtype: torch.dtype,
+) -> dict[str, Any]:
+    """Recompute dense linear-solve residual and normwise backward error.
+
+    No input is cast or moved.  ``residual_compute_dtype`` is an explicit
+    assertion about the represented system and must exactly match every input.
+    """
+
+    A = _require_real_tensor(A, "A", ndim=2)
+    b = _require_real_tensor(b, "b", ndim=1)
+    x = _require_real_tensor(x, "x", ndim=1)
+    _require_same_dtype_and_device(((A, "A"), (b, "b"), (x, "x")))
+    _require_explicit_compute_dtype(
+        residual_compute_dtype,
+        "residual_compute_dtype",
+        ((A, "A"), (b, "b"), (x, "x")),
+    )
+    if A.shape[0] != A.shape[1]:
+        raise CalibrationMetricInputError("A must be square")
+    dimension = A.shape[0]
+    if b.shape != (dimension,) or x.shape != (dimension,):
+        raise CalibrationMetricInputError("b and x must have shape (A.shape[0],)")
+
+    residual = b - A @ x
+    if not bool(torch.isfinite(residual).all().item()):
+        raise CalibrationMetricInputError("dense residual recomputation produced a nonfinite value")
+    operator_norm = torch.linalg.matrix_norm(A, ord=2)
+    result = _dense_solve_error_record(
+        residual,
+        b,
+        x,
+        operator_norm,
+        residual_compute_dtype=residual_compute_dtype,
+    )
+    result["dense_operator_spectral_norm"] = result["operator_norm_2"]
+    return result
+
+
+def matrix_free_solve_error_metrics(
+    residual: torch.Tensor,
+    b: torch.Tensor,
+    x: torch.Tensor,
+    *,
+    operator_norm_upper_bound: float | torch.Tensor,
+    residual_compute_dtype: torch.dtype,
+) -> dict[str, Any]:
+    """Bound solve error from caller-claimed matrix-free evidence.
+
+    ``residual`` is only a caller claim that it equals ``b - A(x)``; this
+    function cannot establish its freshness or independently apply ``A``.
+    Likewise, ``operator_norm_upper_bound`` is an externally asserted bound,
+    not a norm computed or verified here.  Consequently the quantity formed
+    with that upper bound is only a *lower* bound on the exact normwise
+    backward error, never a generic backward-error certificate.
+
+    Conditional on the residual claim, ``A(x) = b - residual`` supplies a
+    lower bound on ``||A||_2`` and hence an upper bound on the exact normwise
+    backward error.  A fixed dtype ``tiny`` floor handles zero and subnormal
+    normalization scales.  For exactly zero ``x``, the residual claim must
+    satisfy ``b - residual == 0`` exactly.
+    """
+
+    residual = _require_real_tensor(residual, "residual", ndim=1)
+    b = _require_real_tensor(b, "b", ndim=1)
+    x = _require_real_tensor(x, "x", ndim=1)
+    _require_same_tensor_contract(residual, b, "residual", "b")
+    _require_same_tensor_contract(residual, x, "residual", "x")
+    _require_explicit_compute_dtype(
+        residual_compute_dtype,
+        "residual_compute_dtype",
+        ((residual, "residual"), (b, "b"), (x, "x")),
+    )
+    operator_norm_upper = _positive_scalar(
+        operator_norm_upper_bound,
+        "operator_norm_upper_bound",
+        like=residual,
+    )
+
+    claimed_operator_action = b - residual
+    if not bool(torch.isfinite(claimed_operator_action).all().item()):
+        raise CalibrationMetricInputError(
+            "b - residual produced a nonfinite claimed operator action"
+        )
+    solution_is_exact_zero = int(torch.count_nonzero(x).item()) == 0
+    if solution_is_exact_zero and not torch.equal(b, residual):
+        raise CalibrationMetricInputError(
+            "caller-claimed residual is inconsistent with exactly zero x: "
+            "b - residual must be exactly zero"
+        )
+
+    residual_norm = _stable_vector_norm_2(residual, "residual_norm_2")
+    rhs_norm = _stable_vector_norm_2(b, "rhs_norm_2")
+    solution_norm = _stable_vector_norm_2(x, "solution_norm_2")
+    claimed_action_norm = _stable_vector_norm_2(
+        claimed_operator_action,
+        "claimed_operator_action_norm_2",
+    )
+    for value, label in (
+        (residual_norm, "residual_norm_2"),
+        (rhs_norm, "rhs_norm_2"),
+        (solution_norm, "solution_norm_2"),
+        (claimed_action_norm, "claimed_operator_action_norm_2"),
+        (operator_norm_upper, "externally_asserted_operator_norm_upper_bound"),
+    ):
+        _finite_float(value, label)
+
+    floor = torch.finfo(residual_compute_dtype).tiny
+    floor_tensor = residual.new_tensor(floor)
+    relative_denominator = torch.maximum(rhs_norm, floor_tensor)
+    operator_lower_denominator = torch.maximum(solution_norm, floor_tensor)
+    operator_norm_lower = claimed_action_norm / operator_lower_denominator
+
+    asserted_action_upper = operator_norm_upper * solution_norm
+    _finite_float(asserted_action_upper, "asserted_operator_action_norm_upper_bound")
+    if bool((asserted_action_upper < claimed_action_norm).item()):
+        raise CalibrationMetricInputError(
+            "externally asserted operator norm upper bound contradicts the "
+            "caller-claimed operator action"
+        )
+
+    lower_bound_scale = asserted_action_upper + rhs_norm
+    upper_bound_scale = claimed_action_norm + rhs_norm
+    for value, label in (
+        (lower_bound_scale, "exact_backward_error_lower_bound_scale"),
+        (upper_bound_scale, "exact_backward_error_upper_bound_scale"),
+        (operator_norm_lower, "operator_norm_lower_bound_from_claimed_action"),
+    ):
+        _finite_float(value, label)
+    lower_bound_denominator = torch.maximum(lower_bound_scale, floor_tensor)
+    upper_bound_denominator = torch.maximum(upper_bound_scale, floor_tensor)
+    relative_residual = residual_norm / relative_denominator
+    backward_error_lower = residual_norm / lower_bound_denominator
+    backward_error_upper = residual_norm / upper_bound_denominator
+
+    return {
+        "system_dimension": int(b.numel()),
+        "residual_compute_dtype": _dtype_name(residual_compute_dtype),
+        "residual_compute_device": str(residual.device),
+        "normalization_floor": floor,
+        "residual_provenance": "caller_claimed",
+        "operator_norm_upper_bound_provenance": "externally_asserted",
+        "exact_normwise_backward_error_lower_bound_condition": (
+            "caller_claimed_residual_and_externally_asserted_operator_norm_upper_bound"
+        ),
+        "exact_normwise_backward_error_upper_bound_condition": "caller_claimed_residual",
+        "externally_asserted_operator_norm_upper_bound": _finite_float(
+            operator_norm_upper,
+            "externally_asserted_operator_norm_upper_bound",
+        ),
+        "solution_is_exact_zero": solution_is_exact_zero,
+        "solution_norm_2": _finite_float(solution_norm, "solution_norm_2"),
+        "rhs_norm_2": _finite_float(rhs_norm, "rhs_norm_2"),
+        "residual_norm_2": _finite_float(residual_norm, "residual_norm_2"),
+        "claimed_operator_action_norm_2": _finite_float(
+            claimed_action_norm,
+            "claimed_operator_action_norm_2",
+        ),
+        "relative_residual_denominator": _finite_float(
+            relative_denominator,
+            "relative_residual_denominator",
+        ),
+        "operator_norm_lower_bound_denominator": _finite_float(
+            operator_lower_denominator,
+            "operator_norm_lower_bound_denominator",
+        ),
+        "operator_norm_lower_bound_from_claimed_action": _finite_float(
+            operator_norm_lower,
+            "operator_norm_lower_bound_from_claimed_action",
+        ),
+        "exact_normwise_backward_error_lower_bound_denominator": _finite_float(
+            lower_bound_denominator,
+            "exact_normwise_backward_error_lower_bound_denominator",
+        ),
+        "exact_normwise_backward_error_upper_bound_denominator": _finite_float(
+            upper_bound_denominator,
+            "exact_normwise_backward_error_upper_bound_denominator",
+        ),
+        "relative_residual": _finite_float(relative_residual, "relative_residual"),
+        "exact_normwise_backward_error_lower_bound": _finite_float(
+            backward_error_lower,
+            "exact_normwise_backward_error_lower_bound",
+        ),
+        "exact_normwise_backward_error_upper_bound": _finite_float(
+            backward_error_upper,
+            "exact_normwise_backward_error_upper_bound",
+        ),
+    }
+
+
+def cholesky_backward_error_metrics(
+    A: torch.Tensor,
+    L: torch.Tensor,
+    *,
+    compute_dtype: torch.dtype,
+) -> dict[str, Any]:
+    """Report the relative factorization residual for a Cholesky factor.
+
+    ``L`` must be exactly lower triangular with a strictly positive diagonal;
+    inputs that are merely square roots of ``A`` are not Cholesky factors.
+    The factorization residual is exactly ``A - L @ L.T`` in the
+    caller-declared input dtype and device.  Inaccurate valid-form factors are
+    measured rather than repaired.
+    """
+
+    A = _require_real_tensor(A, "A", ndim=2)
+    L = _require_real_tensor(L, "L", ndim=2)
+    _require_same_tensor_contract(A, L, "A", "L")
+    _require_explicit_compute_dtype(
+        compute_dtype,
+        "compute_dtype",
+        ((A, "A"), (L, "L")),
+    )
+    if A.shape[0] != A.shape[1]:
+        raise CalibrationMetricInputError("A and L must be square")
+    if int(torch.count_nonzero(torch.triu(L, diagonal=1)).item()) != 0:
+        raise CalibrationMetricInputError("L must be exactly lower triangular")
+    if bool((torch.diagonal(L) <= 0.0).any().item()):
+        raise CalibrationMetricInputError("L diagonal must be strictly positive")
+
+    residual = A - L @ L.T
+    if not bool(torch.isfinite(residual).all().item()):
+        raise CalibrationMetricInputError(
+            "Cholesky residual recomputation produced a nonfinite value"
+        )
+    matrix_spectral_norm = torch.linalg.matrix_norm(A, ord=2)
+    matrix_frobenius_norm = torch.linalg.matrix_norm(A, ord="fro")
+    residual_spectral_norm = torch.linalg.matrix_norm(residual, ord=2)
+    residual_frobenius_norm = torch.linalg.matrix_norm(residual, ord="fro")
+    for value, label in (
+        (matrix_spectral_norm, "matrix_spectral_norm"),
+        (matrix_frobenius_norm, "matrix_frobenius_norm"),
+        (residual_spectral_norm, "residual_spectral_norm"),
+        (residual_frobenius_norm, "residual_frobenius_norm"),
+    ):
+        _finite_float(value, label)
+
+    floor = torch.finfo(compute_dtype).tiny
+    floor_tensor = A.new_tensor(floor)
+    spectral_denominator = torch.maximum(matrix_spectral_norm, floor_tensor)
+    frobenius_denominator = torch.maximum(matrix_frobenius_norm, floor_tensor)
+    spectral_relative_residual = residual_spectral_norm / spectral_denominator
+    frobenius_relative_residual = residual_frobenius_norm / frobenius_denominator
+    return {
+        "matrix_dimension": int(A.shape[0]),
+        "compute_dtype": _dtype_name(compute_dtype),
+        "compute_device": str(A.device),
+        "normalization_floor": floor,
+        "factor_contract": "exactly_lower_triangular_with_strictly_positive_diagonal",
+        "residual_kind": "cholesky_factorization_residual",
+        "residual_definition": "A_minus_L_matmul_L_transpose",
+        "matrix_spectral_norm": _finite_float(
+            matrix_spectral_norm,
+            "matrix_spectral_norm",
+        ),
+        "matrix_frobenius_norm": _finite_float(
+            matrix_frobenius_norm,
+            "matrix_frobenius_norm",
+        ),
+        "residual_spectral_norm": _finite_float(
+            residual_spectral_norm,
+            "residual_spectral_norm",
+        ),
+        "residual_frobenius_norm": _finite_float(
+            residual_frobenius_norm,
+            "residual_frobenius_norm",
+        ),
+        "spectral_relative_factorization_residual_denominator": _finite_float(
+            spectral_denominator,
+            "spectral_relative_factorization_residual_denominator",
+        ),
+        "frobenius_relative_factorization_residual_denominator": _finite_float(
+            frobenius_denominator,
+            "frobenius_relative_factorization_residual_denominator",
+        ),
+        "spectral_relative_factorization_residual": _finite_float(
+            spectral_relative_residual,
+            "spectral_relative_factorization_residual",
+        ),
+        "frobenius_relative_factorization_residual": _finite_float(
+            frobenius_relative_residual,
+            "frobenius_relative_factorization_residual",
+        ),
+    }
+
+
 def moment_error_metrics(
     reference_mean: torch.Tensor,
     candidate_mean: torch.Tensor,

@@ -17,16 +17,41 @@ first array is launched.
 
 Implementation checkpoint: the public execution-envelope contract, training-only fit runner,
 strict 45-slot fit aggregator, exact exclusive-L40S fit launcher, and independent arbitrary-precision
-RBF fixture are now present.  The fit aggregator reads each canonical payload/envelope pair once
+RBF fixture are now present.  The label-free probe foundation is also present: it selects exactly the
+100 registered development-validation coordinate rows without touching `E` or `F`, freezes pinned
+vendor neighbours only in source fp32, and expands all 122 task records into the domain-separated
+probe-core work-plan hash
+`c815d848c8866ed085522d56f9db7aedef304a6d3c6e4ef3c24ee0be7f25498e`.  That hash also covers the
+development replicas, exact evaluation design, neighbour/tie policy, rank rule, strata, stress
+registry, and four-arm full-q registry.  The neighbour boundary rejects short training populations,
+train/evaluation source overlap, nonfinite fp32 scaling or distances, and every selected or boundary
+distance tie; the X-only selector is not by itself corpus authorization.
+The launch-manifest contract separately binds the earlier fit deployment and the later probe
+deployment, the fit catalog raw/integrity/cohort hashes, the work-plan hash, and the fixed three-array
+topology `0-119%1`, `120-120%1`, `121-121%1`.  This manifest is an input contract, not a launcher or
+submission authorization.  Its builders and validators reload private canonical policy bytes and
+recompute the scheduler and probe-plan domains on every call; mutable public presentation objects are
+not trust roots.  Fit and probe deployments may have different source trees and dependency locks,
+but must share the TERA gitlink and catalog-generation commit/tree.  Dense diagnostics recompute the
+exact represented-system residual and normwise backward error.  Matrix-free diagnostics instead
+label their inputs as caller claims and
+return a conditional backward-error interval: an asserted operator-norm upper bound gives the lower
+endpoint, while `A(x)=b-r` gives the upper endpoint.  No generic matrix-free backward-error pass
+field exists.  Cholesky diagnostics require an exactly lower-triangular, positive-diagonal factor and
+report relative factorization residuals.  Every diagnostic records dtype/device evidence and uses
+the fixed dtype-tiny floor.
+
+The fit aggregator reads each canonical payload/envelope pair once
 through no-follow descriptors, rejects any link alias or unregistered path, binds an explicit expected
 source/tree/gitlink/dependency/catalog deployment, requires one Slurm array with unique per-task job
 evidence, and can never set `freeze_ready=true`.  The fit runner itself validates live Slurm and
 process-visible hardware before any corpus read or training-tensor allocation, then uses one private
 byte-identical snapshot for bundle authorization and loading rather than reopening mutable input paths.  The
 arbitrary-precision fixture certifies posterior moments only for a caller-supplied support basis and
-coordinates; support construction, rank, and cutoff remain N0 obligations.  The probe-side execution
-chain and threshold-freeze workflow are not yet complete, so this checkpoint still authorizes no
-Slurm submission and no confirmatory access.
+coordinates; support construction, rank, and cutoff remain N0 obligations.  The audited ORBIT system
+exposure, N0/N1/N2 and full-q execution core, probe artifact writer, strict 122-slot intake,
+discovery/locked-holdout threshold workflow, and probe Slurm runner remain incomplete.  This checkpoint
+therefore still authorizes no Slurm submission and no confirmatory access.
 
 The earlier v3 artifact from job 2810629 motivated the strata and fault tests but is excluded from
 fitting numerical thresholds.  In particular, its observed errors may not be rounded upward and
@@ -224,8 +249,8 @@ never tested because signs and rotations within a support are non-identifiable. 
 receive both N0 strict-selected ranks and reject a mismatch before computing the rank-normalized
 projector statistic; the runner retains that mismatch as `scientific_status=failed`.
 
-Dense and iterative solves report both a relative residual and the normwise backward error using the
-fixed, non-tunable floor of the declared residual-computation dtype:
+Dense solves report both a relative residual and the normwise backward error using the fixed,
+non-tunable floor of the declared residual-computation dtype:
 
 ```text
 floor = finfo(residual_compute_dtype).tiny
@@ -235,8 +260,26 @@ backward error = ||b-Ax||_2 / max(||A||_2 ||x||_2 + ||b||_2, floor).
 
 Native recursive and fresh residuals retain their source dtype.  A separate CPU-float64 recomputation
 from exactly promoted represented `A`, `b`, and `x` is canonical wherever dense materialization is
-registered; matrix-free cases must record the predeclared operator-norm upper bound used in place of
-`||A||_2`.  No observed RHS magnitude may be used to choose a different floor.
+registered.  In a matrix-free case, let `r` be the runner's immediately recomputed residual and let
+`U` be its analytic asserted upper bound on `||A||_2`.  The pure metric reports only the conditional
+interval
+
+```text
+lower = ||r||_2 / max(U ||x||_2 + ||b||_2, floor)
+upper = ||r||_2 / max(||b-r||_2 + ||b||_2, floor).
+```
+
+The first quantity is a lower bound on the exact normwise backward error, so it may never be used as
+a small-error acceptance certificate.  The second is an upper bound conditional on the claim
+`r=b-A(x)`.  The metric helper cannot prove either freshness or the asserted operator bound: the
+future runner must compute both next to the operator application, bind their provenance, reject
+`U||x||_2 < ||b-r||_2`, and use only the upper endpoint for a one-sided accuracy gate.  No observed
+RHS magnitude may be used to choose a different floor.  This source-dtype interval is not a
+directed-rounding certificate: the runner must also persist its actual `A(x)` action and the later
+correctness bound must include an explicit arithmetic-roundoff margin.
+
+A Cholesky diagnostic accepts only an exactly lower-triangular factor with strictly positive
+diagonal and reports the spectral and Frobenius relative factorization residuals of `A-L L^T`.
 
 ORBIT additionally records fresh rather than only recursive residuals and its residual-to-moment and
 expected-KL diagnostics.  Those bounds apply only inside the selected support.

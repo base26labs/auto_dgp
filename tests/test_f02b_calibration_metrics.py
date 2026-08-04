@@ -8,6 +8,9 @@ import torch
 
 from experiments.f02b_calibration_metrics import (
     CalibrationMetricInputError,
+    cholesky_backward_error_metrics,
+    dense_solve_error_metrics,
+    matrix_free_solve_error_metrics,
     moment_error_metrics,
     nbody_physical_constraint_residuals,
     projector_metrics,
@@ -19,6 +22,420 @@ from experiments.f02b_calibration_metrics import (
 def _assert_strict_json(value):
     encoded = json.dumps(value, allow_nan=False, sort_keys=True)
     assert json.loads(encoded) == value
+
+
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+def test_dense_solve_error_metrics_recompute_exact_residual_in_declared_dtype(dtype):
+    matrix = torch.diag(torch.tensor([2.0, 4.0], dtype=dtype))
+    solution = torch.tensor([1.0, -2.0], dtype=dtype)
+    rhs = matrix @ solution
+
+    result = dense_solve_error_metrics(matrix, rhs, solution, residual_compute_dtype=dtype)
+
+    assert result["system_dimension"] == 2
+    assert result["residual_compute_dtype"] == str(dtype).removeprefix("torch.")
+    assert result["residual_compute_device"] == "cpu"
+    assert result["normalization_floor"] == torch.finfo(dtype).tiny
+    assert result["residual_source"] == "recomputed_as_b_minus_A_matmul_x"
+    assert result["operator_norm_source"] == "dense_matrix_spectral_norm"
+    assert result["operator_norm_is_upper_bound"] is False
+    assert result["operator_norm_2"] == pytest.approx(4.0)
+    assert result["dense_operator_spectral_norm"] == pytest.approx(4.0)
+    assert result["residual_norm_2"] == 0.0
+    assert result["relative_residual"] == 0.0
+    assert result["normwise_backward_error"] == 0.0
+    _assert_strict_json(result)
+
+
+def test_dense_solve_error_metrics_report_perturbed_solution_formula():
+    matrix = torch.diag(torch.tensor([2.0, 4.0], dtype=torch.float64))
+    rhs = torch.tensor([2.0, -8.0], dtype=torch.float64)
+    solution = torch.tensor([1.25, -2.0], dtype=torch.float64)
+
+    result = dense_solve_error_metrics(matrix, rhs, solution, residual_compute_dtype=torch.float64)
+
+    residual_norm = 0.5
+    rhs_norm = math.sqrt(68.0)
+    solution_norm = math.sqrt(1.25**2 + 2.0**2)
+    assert result["residual_norm_2"] == pytest.approx(residual_norm)
+    assert result["rhs_norm_2"] == pytest.approx(rhs_norm)
+    assert result["solution_norm_2"] == pytest.approx(solution_norm)
+    assert result["relative_residual"] == pytest.approx(residual_norm / rhs_norm)
+    assert result["backward_error_denominator"] == pytest.approx(4.0 * solution_norm + rhs_norm)
+    assert result["normwise_backward_error"] == pytest.approx(
+        residual_norm / (4.0 * solution_norm + rhs_norm)
+    )
+    _assert_strict_json(result)
+
+
+def test_matrix_free_solve_error_metrics_report_conditional_backward_error_bounds():
+    residual = torch.tensor([-0.5, 0.0], dtype=torch.float64)
+    rhs = torch.tensor([2.0, -8.0], dtype=torch.float64)
+    solution = torch.tensor([1.25, -2.0], dtype=torch.float64)
+
+    result = matrix_free_solve_error_metrics(
+        residual,
+        rhs,
+        solution,
+        operator_norm_upper_bound=5.0,
+        residual_compute_dtype=torch.float64,
+    )
+
+    rhs_norm = math.sqrt(68.0)
+    solution_norm = math.sqrt(1.25**2 + 2.0**2)
+    claimed_action_norm = math.sqrt(2.5**2 + 8.0**2)
+    assert result["residual_provenance"] == "caller_claimed"
+    assert result["operator_norm_upper_bound_provenance"] == "externally_asserted"
+    assert result["exact_normwise_backward_error_lower_bound_condition"] == (
+        "caller_claimed_residual_and_externally_asserted_operator_norm_upper_bound"
+    )
+    assert (
+        result["exact_normwise_backward_error_upper_bound_condition"] == "caller_claimed_residual"
+    )
+    assert result["externally_asserted_operator_norm_upper_bound"] == 5.0
+    assert result["claimed_operator_action_norm_2"] == pytest.approx(claimed_action_norm)
+    assert result["operator_norm_lower_bound_from_claimed_action"] == pytest.approx(
+        claimed_action_norm / solution_norm
+    )
+    assert result["relative_residual"] == pytest.approx(0.5 / rhs_norm)
+    assert result["exact_normwise_backward_error_lower_bound"] == pytest.approx(
+        0.5 / (5.0 * solution_norm + rhs_norm)
+    )
+    assert result["exact_normwise_backward_error_upper_bound"] == pytest.approx(
+        0.5 / (claimed_action_norm + rhs_norm)
+    )
+    assert "normwise_backward_error" not in result
+    assert "backward_error_denominator" not in result
+    _assert_strict_json(result)
+
+
+def test_matrix_free_huge_asserted_bound_cannot_masquerade_as_general_certificate():
+    result = matrix_free_solve_error_metrics(
+        torch.tensor([1.0], dtype=torch.float64),
+        torch.tensor([1.0], dtype=torch.float64),
+        torch.tensor([1.0], dtype=torch.float64),
+        operator_norm_upper_bound=1e300,
+        residual_compute_dtype=torch.float64,
+    )
+
+    assert result["exact_normwise_backward_error_lower_bound"] == pytest.approx(
+        1e-300,
+        rel=1e-12,
+        abs=0.0,
+    )
+    assert result["exact_normwise_backward_error_upper_bound"] == pytest.approx(1.0)
+    assert "normwise_backward_error" not in result
+    assert "operator_norm_2" not in result
+    _assert_strict_json(result)
+
+
+def test_matrix_free_zero_solution_has_exact_bounds_and_rejects_inconsistent_claim():
+    zero = torch.zeros(1, dtype=torch.float64)
+    rhs = torch.ones(1, dtype=torch.float64)
+    result = matrix_free_solve_error_metrics(
+        rhs,
+        rhs,
+        zero,
+        operator_norm_upper_bound=1e300,
+        residual_compute_dtype=torch.float64,
+    )
+
+    assert result["solution_is_exact_zero"] is True
+    assert result["operator_norm_lower_bound_denominator"] == torch.finfo(torch.float64).tiny
+    assert result["operator_norm_lower_bound_from_claimed_action"] == 0.0
+    assert result["exact_normwise_backward_error_lower_bound"] == pytest.approx(1.0)
+    assert result["exact_normwise_backward_error_upper_bound"] == pytest.approx(1.0)
+    _assert_strict_json(result)
+
+    with pytest.raises(CalibrationMetricInputError, match="inconsistent with exactly zero x"):
+        matrix_free_solve_error_metrics(
+            zero,
+            rhs,
+            zero,
+            operator_norm_upper_bound=1.0,
+            residual_compute_dtype=torch.float64,
+        )
+
+
+def test_matrix_free_operator_lower_bound_uses_tiny_floor_for_subnormal_solution():
+    tiny = torch.finfo(torch.float64).tiny
+    solution = torch.tensor([0.5 * tiny], dtype=torch.float64)
+    residual = torch.tensor([0.5 * tiny], dtype=torch.float64)
+    rhs = torch.tensor([tiny], dtype=torch.float64)
+
+    result = matrix_free_solve_error_metrics(
+        residual,
+        rhs,
+        solution,
+        operator_norm_upper_bound=1.0,
+        residual_compute_dtype=torch.float64,
+    )
+
+    assert result["solution_norm_2"] == 0.5 * tiny
+    assert result["operator_norm_lower_bound_denominator"] == tiny
+    assert result["operator_norm_lower_bound_from_claimed_action"] == pytest.approx(0.5)
+    assert result["exact_normwise_backward_error_lower_bound"] == pytest.approx(1.0 / 3.0)
+    assert result["exact_normwise_backward_error_upper_bound"] == pytest.approx(1.0 / 3.0)
+    _assert_strict_json(result)
+
+
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+def test_linear_solve_metrics_use_fixed_dtype_tiny_for_zero_scale(dtype):
+    matrix = torch.zeros((2, 2), dtype=dtype)
+    vector = torch.zeros(2, dtype=dtype)
+
+    dense = dense_solve_error_metrics(matrix, vector, vector, residual_compute_dtype=dtype)
+    matrix_free = matrix_free_solve_error_metrics(
+        vector,
+        vector,
+        vector,
+        operator_norm_upper_bound=1.0,
+        residual_compute_dtype=dtype,
+    )
+
+    for result in (dense, matrix_free):
+        assert result["normalization_floor"] == torch.finfo(dtype).tiny
+        assert result["relative_residual_denominator"] == torch.finfo(dtype).tiny
+        assert result["relative_residual"] == 0.0
+        _assert_strict_json(result)
+    assert dense["backward_error_denominator"] == torch.finfo(dtype).tiny
+    assert dense["normwise_backward_error"] == 0.0
+    assert (
+        matrix_free["exact_normwise_backward_error_lower_bound_denominator"]
+        == torch.finfo(dtype).tiny
+    )
+    assert (
+        matrix_free["exact_normwise_backward_error_upper_bound_denominator"]
+        == torch.finfo(dtype).tiny
+    )
+    assert matrix_free["exact_normwise_backward_error_lower_bound"] == 0.0
+    assert matrix_free["exact_normwise_backward_error_upper_bound"] == 0.0
+
+
+def test_dense_solve_error_metrics_reject_shape_dtype_and_nonfinite_inputs():
+    with pytest.raises(CalibrationMetricInputError, match="square"):
+        dense_solve_error_metrics(
+            torch.ones((2, 3), dtype=torch.float64),
+            torch.ones(2, dtype=torch.float64),
+            torch.ones(2, dtype=torch.float64),
+            residual_compute_dtype=torch.float64,
+        )
+    with pytest.raises(CalibrationMetricInputError, match=r"shape \(A.shape\[0\],\)"):
+        dense_solve_error_metrics(
+            torch.eye(2, dtype=torch.float64),
+            torch.ones(3, dtype=torch.float64),
+            torch.ones(2, dtype=torch.float64),
+            residual_compute_dtype=torch.float64,
+        )
+    with pytest.raises(CalibrationMetricInputError, match="identical dtypes"):
+        dense_solve_error_metrics(
+            torch.eye(2, dtype=torch.float64),
+            torch.ones(2, dtype=torch.float32),
+            torch.ones(2, dtype=torch.float64),
+            residual_compute_dtype=torch.float64,
+        )
+    with pytest.raises(CalibrationMetricInputError, match="actual dtype"):
+        dense_solve_error_metrics(
+            torch.eye(2, dtype=torch.float64),
+            torch.ones(2, dtype=torch.float64),
+            torch.ones(2, dtype=torch.float64),
+            residual_compute_dtype=torch.float32,
+        )
+    with pytest.raises(CalibrationMetricInputError, match="float32 or torch.float64"):
+        dense_solve_error_metrics(
+            torch.eye(2, dtype=torch.float64),
+            torch.ones(2, dtype=torch.float64),
+            torch.ones(2, dtype=torch.float64),
+            residual_compute_dtype=torch.float16,
+        )
+    with pytest.raises(CalibrationMetricInputError, match="finite"):
+        dense_solve_error_metrics(
+            torch.tensor([[1.0, float("nan")], [0.0, 1.0]], dtype=torch.float64),
+            torch.ones(2, dtype=torch.float64),
+            torch.ones(2, dtype=torch.float64),
+            residual_compute_dtype=torch.float64,
+        )
+
+
+@pytest.mark.parametrize("bound", [0.0, -1.0, float("nan"), float("inf"), True])
+def test_matrix_free_solve_error_metrics_reject_invalid_operator_bound(bound):
+    vector = torch.ones(2, dtype=torch.float64)
+    with pytest.raises(CalibrationMetricInputError, match="strictly positive|real scalar"):
+        matrix_free_solve_error_metrics(
+            vector,
+            vector,
+            vector,
+            operator_norm_upper_bound=bound,
+            residual_compute_dtype=torch.float64,
+        )
+
+
+def test_matrix_free_solve_error_metrics_reject_contract_mismatches():
+    vector64 = torch.ones(2, dtype=torch.float64)
+    with pytest.raises(CalibrationMetricInputError, match="identical shapes"):
+        matrix_free_solve_error_metrics(
+            torch.ones(3, dtype=torch.float64),
+            vector64,
+            vector64,
+            operator_norm_upper_bound=1.0,
+            residual_compute_dtype=torch.float64,
+        )
+    with pytest.raises(CalibrationMetricInputError, match="identical dtypes"):
+        matrix_free_solve_error_metrics(
+            vector64,
+            torch.ones(2, dtype=torch.float32),
+            vector64,
+            operator_norm_upper_bound=1.0,
+            residual_compute_dtype=torch.float64,
+        )
+    with pytest.raises(CalibrationMetricInputError, match="must have dtype"):
+        matrix_free_solve_error_metrics(
+            vector64,
+            vector64,
+            vector64,
+            operator_norm_upper_bound=torch.tensor(1.0, dtype=torch.float32),
+            residual_compute_dtype=torch.float64,
+        )
+    with pytest.raises(CalibrationMetricInputError, match="contradicts"):
+        matrix_free_solve_error_metrics(
+            torch.zeros(2, dtype=torch.float64),
+            2.0 * vector64,
+            vector64,
+            operator_norm_upper_bound=1.0,
+            residual_compute_dtype=torch.float64,
+        )
+
+
+def test_cholesky_backward_error_metrics_report_exact_and_bad_factors():
+    matrix = torch.diag(torch.tensor([4.0, 9.0], dtype=torch.float64))
+    exact_factor = torch.diag(torch.tensor([2.0, 3.0], dtype=torch.float64))
+
+    exact = cholesky_backward_error_metrics(matrix, exact_factor, compute_dtype=torch.float64)
+
+    assert exact["matrix_dimension"] == 2
+    assert exact["compute_dtype"] == "float64"
+    assert exact["compute_device"] == "cpu"
+    assert exact["normalization_floor"] == torch.finfo(torch.float64).tiny
+    assert exact["factor_contract"] == ("exactly_lower_triangular_with_strictly_positive_diagonal")
+    assert exact["residual_kind"] == "cholesky_factorization_residual"
+    assert exact["residual_definition"] == "A_minus_L_matmul_L_transpose"
+    assert exact["residual_spectral_norm"] == 0.0
+    assert exact["residual_frobenius_norm"] == 0.0
+    assert exact["spectral_relative_factorization_residual"] == 0.0
+    assert exact["frobenius_relative_factorization_residual"] == 0.0
+    _assert_strict_json(exact)
+
+    bad_factor = torch.diag(torch.tensor([2.0, 2.0], dtype=torch.float64))
+    bad = cholesky_backward_error_metrics(matrix, bad_factor, compute_dtype=torch.float64)
+    assert bad["matrix_spectral_norm"] == pytest.approx(9.0)
+    assert bad["matrix_frobenius_norm"] == pytest.approx(math.sqrt(97.0))
+    assert bad["residual_spectral_norm"] == pytest.approx(5.0)
+    assert bad["residual_frobenius_norm"] == pytest.approx(5.0)
+    assert bad["spectral_relative_factorization_residual"] == pytest.approx(5.0 / 9.0)
+    assert bad["frobenius_relative_factorization_residual"] == pytest.approx(5.0 / math.sqrt(97.0))
+    _assert_strict_json(bad)
+
+
+def test_cholesky_backward_error_metrics_use_fixed_floor_and_reject_bad_contracts():
+    zero = torch.zeros((2, 2), dtype=torch.float32)
+    underflowing_factor = torch.diag(
+        torch.full((2,), torch.finfo(torch.float32).tiny, dtype=torch.float32)
+    )
+    result = cholesky_backward_error_metrics(
+        zero,
+        underflowing_factor,
+        compute_dtype=torch.float32,
+    )
+    assert result["normalization_floor"] == torch.finfo(torch.float32).tiny
+    assert (
+        result["spectral_relative_factorization_residual_denominator"]
+        == torch.finfo(torch.float32).tiny
+    )
+    assert (
+        result["frobenius_relative_factorization_residual_denominator"]
+        == torch.finfo(torch.float32).tiny
+    )
+    assert result["spectral_relative_factorization_residual"] == 0.0
+    _assert_strict_json(result)
+
+    with pytest.raises(CalibrationMetricInputError, match="square"):
+        cholesky_backward_error_metrics(
+            torch.ones((2, 3), dtype=torch.float64),
+            torch.ones((2, 3), dtype=torch.float64),
+            compute_dtype=torch.float64,
+        )
+    with pytest.raises(CalibrationMetricInputError, match="identical shapes"):
+        cholesky_backward_error_metrics(
+            torch.eye(2, dtype=torch.float64),
+            torch.eye(3, dtype=torch.float64),
+            compute_dtype=torch.float64,
+        )
+    with pytest.raises(CalibrationMetricInputError, match="identical dtypes"):
+        cholesky_backward_error_metrics(
+            torch.eye(2, dtype=torch.float64),
+            torch.eye(2, dtype=torch.float32),
+            compute_dtype=torch.float64,
+        )
+    with pytest.raises(CalibrationMetricInputError, match="actual dtype"):
+        cholesky_backward_error_metrics(
+            torch.eye(2, dtype=torch.float64),
+            torch.eye(2, dtype=torch.float64),
+            compute_dtype=torch.float32,
+        )
+    with pytest.raises(CalibrationMetricInputError, match="finite"):
+        cholesky_backward_error_metrics(
+            torch.eye(2, dtype=torch.float64),
+            torch.tensor([[1.0, 0.0], [float("inf"), 1.0]], dtype=torch.float64),
+            compute_dtype=torch.float64,
+        )
+
+
+def test_cholesky_backward_error_metrics_reject_non_cholesky_square_roots():
+    rotation = torch.tensor(
+        [[1.0, -1.0], [1.0, 1.0]],
+        dtype=torch.float64,
+    ) / math.sqrt(2.0)
+    with pytest.raises(CalibrationMetricInputError, match="exactly lower triangular"):
+        cholesky_backward_error_metrics(
+            torch.eye(2, dtype=torch.float64),
+            rotation,
+            compute_dtype=torch.float64,
+        )
+
+    for bad_diagonal in (0.0, -1.0):
+        factor = torch.diag(torch.tensor([1.0, bad_diagonal], dtype=torch.float64))
+        with pytest.raises(CalibrationMetricInputError, match="strictly positive"):
+            cholesky_backward_error_metrics(
+                factor @ factor.T,
+                factor,
+                compute_dtype=torch.float64,
+            )
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is unavailable")
+def test_linear_algebra_error_metrics_reject_device_mismatches():
+    matrix_cpu = torch.eye(2, dtype=torch.float64)
+    vector_cpu = torch.ones(2, dtype=torch.float64)
+    vector_cuda = vector_cpu.cuda()
+    matrix_cuda = matrix_cpu.cuda()
+
+    with pytest.raises(CalibrationMetricInputError, match="same device"):
+        dense_solve_error_metrics(
+            matrix_cpu,
+            vector_cuda,
+            vector_cpu,
+            residual_compute_dtype=torch.float64,
+        )
+    with pytest.raises(CalibrationMetricInputError, match="same device"):
+        matrix_free_solve_error_metrics(
+            vector_cuda,
+            vector_cpu,
+            vector_cuda,
+            operator_norm_upper_bound=1.0,
+            residual_compute_dtype=torch.float64,
+        )
+    with pytest.raises(CalibrationMetricInputError, match="same device"):
+        cholesky_backward_error_metrics(matrix_cpu, matrix_cuda, compute_dtype=torch.float64)
 
 
 def test_moment_errors_use_fixed_scales_and_are_json_safe():

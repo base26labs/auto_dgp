@@ -7,7 +7,7 @@ scope downgrades are reported in place, loudly, naming the check that failed.
 
 ---
 
-## 2026-08-03 — F02b numerical calibration: **fit-side chain implemented, execution blocked**
+## 2026-08-03 — F02b numerical calibration: **fit chain and probe foundation implemented, execution blocked**
 
 No calibration job has been submitted.  `F02B_NUMERICAL_CALIBRATION_v1` predeclares 45 fixed-budget
 fit tasks and 122 reusable-fit probe tasks over development replicas `0,1,2`, all five dimensions,
@@ -42,8 +42,39 @@ checks for `0-44%1`, one requested L40S, 16 CPUs, 64 GiB, eight hours, and
 The independent RBF fixture now recomputes projected conditional moments from exact binary32 dyadics
 with `mpmath` at 160 and 256 bits.  Its certificate is deliberately narrow: it validates the
 conditional for caller-supplied support basis and coordinates, not the support64 SVD, cutoff, or rank
-selection, which still require companion N0 evidence.  Probe runners, their strict aggregator and
-launcher, threshold discovery/locked-holdout workflow, and the final F02b protocol remain incomplete.
+selection, which still require companion N0 evidence.
+
+The first probe-side foundation is now implemented as a fail-closed design but has not run.  An X-only
+selector binds the split name `validation` and copies exactly 20 trajectories times five registered
+times without reading `E` or `F`; the selector is explicitly not a substitute for future
+task/catalog/replica authorization.  Pinned vendor KNN is called only on learned-isotropic
+source-fp32 geometry; it persists both training positions and source-row identities, requires
+disjoint train/evaluation sources, and fails on short training populations, nonfinite scaling or
+distances, ties, and noncanonical vendor order.  No fp64 arm may reselect neighbours.  All 122
+task-specific work plans are bound by the domain-separated SHA-256
+`c815d848c8866ed085522d56f9db7aedef304a6d3c6e4ef3c24ee0be7f25498e`, including the exact
+development/evaluation design, rank/strata/stress/full-q registries, the production
+`1e-5` request, the preregistered fp32/fp64 sweep, `min(4*m*r,4096)` cap, strata counts, stress rows,
+and the `m=50` four-arm full-q applicability.  Pure diagnostics now recompute dense residuals and
+exact dense backward error.  Matrix-free inputs are explicitly caller-claimed rather than
+misrepresented as verified: an asserted operator-norm upper bound yields only a lower endpoint, while
+the claimed action `b-r` yields a conditional upper endpoint.  The generic pass field was removed.
+Cholesky factors must be exactly lower triangular with positive diagonal and are measured by relative
+factorization residual, without casting, clipping, or changing the dtype-tiny floor.
+
+The canonical launch manifest fixes three separate submissions (`0-119%1`, singleton 120, singleton
+121), requires distinct future `array_job_id` identities for their allocations, and binds the data,
+fit stage, fit catalog, output paths, public numerical/resource policy, and catalog hashes.  Crucially,
+it records `expected_fit_deployment` separately from `probe_deployment`: probe implementation work
+must not retroactively pretend that the earlier fits ran from the later source commit.  Both stages
+must share the TERA gitlink and catalog-generation identity, while source trees and dependency locks
+may differ.  Private canonical policy bytes, not mutable public views, are the validation authority;
+scheduler and probe-plan domains are rehashed on every build and validation.  The manifest still does
+not execute or validate a live allocation.
+
+The audited ORBIT build/solve exposure, N0/N1/N2 and full-q computations, stress/fixture execution,
+probe artifact runner, strict 122-slot intake, threshold discovery/locked-holdout evaluator, and
+probe launcher remain incomplete.
 No fit or probe calibration job may be launched until that remaining chain is committed and audited;
 every aggregate remains `freeze_ready=false` until a separate review binds its hashes into a frozen
 F02b protocol.
