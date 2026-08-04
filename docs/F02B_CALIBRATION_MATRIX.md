@@ -15,6 +15,19 @@ authorize submission.  Fit/probe runners, strict schemas and aggregators, the hi
 and Slurm recipes must all be committed, tested, and shown to reject incomplete provenance before the
 first array is launched.
 
+Implementation checkpoint: the public execution-envelope contract, training-only fit runner,
+strict 45-slot fit aggregator, exact exclusive-L40S fit launcher, and independent arbitrary-precision
+RBF fixture are now present.  The fit aggregator reads each canonical payload/envelope pair once
+through no-follow descriptors, rejects any link alias or unregistered path, binds an explicit expected
+source/tree/gitlink/dependency/catalog deployment, requires one Slurm array with unique per-task job
+evidence, and can never set `freeze_ready=true`.  The fit runner itself validates live Slurm and
+process-visible hardware before any corpus read or training-tensor allocation, then uses one private
+byte-identical snapshot for bundle authorization and loading rather than reopening mutable input paths.  The
+arbitrary-precision fixture certifies posterior moments only for a caller-supplied support basis and
+coordinates; support construction, rank, and cutoff remain N0 obligations.  The probe-side execution
+chain and threshold-freeze workflow are not yet complete, so this checkpoint still authorizes no
+Slurm submission and no confirmatory access.
+
 The earlier v3 artifact from job 2810629 motivated the strata and fault tests but is excluded from
 fitting numerical thresholds.  In particular, its observed errors may not be rounded upward and
 adopted as acceptance thresholds.

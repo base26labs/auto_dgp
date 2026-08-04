@@ -7,7 +7,7 @@ scope downgrades are reported in place, loudly, naming the check that failed.
 
 ---
 
-## 2026-08-03 — F02b numerical calibration: **matrix predeclared, execution blocked**
+## 2026-08-03 — F02b numerical calibration: **fit-side chain implemented, execution blocked**
 
 No calibration job has been submitted.  `F02B_NUMERICAL_CALIBRATION_v1` predeclares 45 fixed-budget
 fit tasks and 122 reusable-fit probe tasks over development replicas `0,1,2`, all five dimensions,
@@ -24,10 +24,29 @@ handling, and family-wise maximum gates.  The earlier job 2810629 errors are exp
 threshold fitting.  Discovery thresholds may be proposed only from independent error bounds and must
 separate registered faults; confirmatory replicas `101..110` remain unopened.
 
-The committed grid and pure metrics are not an execution authorization.  Fit/probe runners, strict
-schemas and aggregators, high-precision fixtures, and exclusive-L40S Slurm recipes must be completed
-and tested first.  Every aggregate remains `freeze_ready=false` until a separate review binds its
-artifacts into a frozen F02b protocol.
+The fit side is now implemented but is still not an execution authorization.  A public immutable
+contract separates the prediction-free fit recipe, requested resources, observed allocation, and
+raw-byte payload binding.  Before reading corpus bytes or allocating training tensors on CUDA, the
+development-only runner independently queries its live Slurm record and process-visible CPU/GPU
+hardware.  It then gives strict parsing, catalog authorization, and the authoritative loader the
+same no-follow, byte-identical private snapshot of the NPZ, metadata, manifest, and catalog; only the
+training split reaches released TERA.  It emits uniquely encoded binary32 parameter JSON plus a
+non-recursive execution envelope and rechecks the corpus, catalog, source tree, and dependency files
+after fitting.  Its 45-slot aggregator enumerates the identity-derived paths, reads regular
+single-link files without following symlinks, requires one common Slurm array with unique per-task
+job evidence, rejects mixed deployments/cohorts and every incomplete or unexpected path, and always
+emits `freeze_ready=false`.  The registered launcher independently repeats the live `scontrol`
+checks for `0-44%1`, one requested L40S, 16 CPUs, 64 GiB, eight hours, and
+`OverSubscribe=EXCLUSIVE`; it has not been submitted.
+
+The independent RBF fixture now recomputes projected conditional moments from exact binary32 dyadics
+with `mpmath` at 160 and 256 bits.  Its certificate is deliberately narrow: it validates the
+conditional for caller-supplied support basis and coordinates, not the support64 SVD, cutoff, or rank
+selection, which still require companion N0 evidence.  Probe runners, their strict aggregator and
+launcher, threshold discovery/locked-holdout workflow, and the final F02b protocol remain incomplete.
+No fit or probe calibration job may be launched until that remaining chain is committed and audited;
+every aggregate remains `freeze_ready=false` until a separate review binds its hashes into a frozen
+F02b protocol.
 
 ---
 
