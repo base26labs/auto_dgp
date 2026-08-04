@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#SBATCH --job-name=pa30r16-dev
+#SBATCH --job-name=prism-dev
 #SBATCH --account=lucasbao
 #SBATCH --partition=short
 #SBATCH --nodes=1
@@ -8,8 +8,8 @@
 #SBATCH --mem=32G
 #SBATCH --time=04:00:00
 #SBATCH --array=0-3%2
-#SBATCH --output=runs/pa30r16-dev-%A_%a.out
-#SBATCH --error=runs/pa30r16-dev-%A_%a.err
+#SBATCH --output=runs/prism-dev-%A_%a.out
+#SBATCH --error=runs/prism-dev-%A_%a.err
 
 set -Eeuo pipefail
 umask 027
@@ -23,7 +23,7 @@ export CUDA_VISIBLE_DEVICES=""
 REPO_ROOT=${PAPER_NBODY_REPO_ROOT:-/projects/lucasbao/tengcc/auto_dgp2}
 PYTHON_BIN=${REPO_ROOT}/.venv/bin/python
 SOURCE_ROOT=${PAPER_NBODY_SOURCE_ROOT:-${REPO_ROOT}/runs/paper_nbody_v4}
-OUTPUT_ROOT=${PAPER_NBODY_DEV_OUTPUT_ROOT:-${REPO_ROOT}/runs/paper_nbody_pa30r16_dev_v2}
+OUTPUT_ROOT=${PAPER_NBODY_DEV_OUTPUT_ROOT:-${REPO_ROOT}/runs/paper_nbody_prism_dev_v1}
 
 if [[ ${SLURM_CPUS_PER_TASK:-} != 8 ]]; then
     echo "precision-rank development requires exactly 8 CPUs per task" >&2

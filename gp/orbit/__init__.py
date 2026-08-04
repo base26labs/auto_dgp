@@ -5,6 +5,10 @@ target-specific gradient reduction.  It lives outside :mod:`gp.tera` so the
 official baseline remains frozen.
 """
 
+from gp.orbit.budgeted import (
+    BudgetedGuardedMarginals,
+    predict_budgeted_guarded_marginals,
+)
 from gp.orbit.operator import (
     CGResult,
     LocalGeometry,
@@ -22,6 +26,7 @@ from gp.orbit.predictor import (
     LocalValueSystem,
     MarginalPredictions,
     build_local_value_system,
+    differentiate_solved_local_value_system,
     predict_local_value,
     predict_local_value_and_mean_gradient,
     predict_marginal_values,
@@ -30,6 +35,7 @@ from gp.orbit.predictor import (
 
 __all__ = [
     "CGResult",
+    "BudgetedGuardedMarginals",
     "LocalGeometry",
     "LocalPrediction",
     "LocalValueGradientPrediction",
@@ -42,7 +48,9 @@ __all__ = [
     "build_local_geometry_from_differences",
     "build_local_value_system",
     "compute_posterior_certificate",
+    "differentiate_solved_local_value_system",
     "predict_local_value",
+    "predict_budgeted_guarded_marginals",
     "predict_local_value_and_mean_gradient",
     "predict_marginal_values",
     "solve_reduced_cg",

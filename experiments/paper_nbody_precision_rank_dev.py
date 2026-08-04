@@ -1,11 +1,11 @@
-"""Development-only precision-aware ORBIT probe on the v4 N-body corpus.
+"""Development-only PRISM-GP probe on the already-read v4 N-body corpus.
 
 The paper arrays and released TERA fit are float32.  The formal v4 benchmark
 casts prediction arithmetic to float64 and consequently used float64 epsilon
 for ORBIT's default numerical-rank rule.  This probe changes exactly one
-method choice: ORBIT-PA30-R16 uses the source float32 epsilon and a fixed
-rank-16 direction budget while retaining float64 prediction arithmetic and the
-registered m=30, tolerance, and solver.
+method choice: PRISM-GP uses source-float32 numerical rank, admits the m=30
+conditional only below a fixed 16-direction budget, applies a label-free
+posterior trust/variance guard, and differentiates only the selected branch.
 
 The already-read v4 corpus is development data.  Results from this module are
 not confirmatory and cannot revive or modify the v4 assessment.
@@ -24,26 +24,29 @@ from typing import Any
 import numpy as np
 import torch
 
-from experiments.f02_internal_models import FrozenTERAParameters, predict_orbit
+from experiments.f02_internal_models import FrozenTERAParameters, ScalarPrediction
 from experiments.paper_nbody_benchmark import (
     ORBIT_CG_MAX_ITERATIONS,
     ORBIT_CG_TOLERANCE,
     PREDICTION_DTYPE,
     TASKS,
     _cast_split,
-    _orbit_resource_summary,
+    _orbit_matmul_flops,
+    _preconditioner_flops,
     _prediction_metrics,
     _sha256,
     _tera_resource_summary,
     load_paper_task_data,
 )
+from gp.orbit.budgeted import predict_budgeted_guarded_marginals
 
-SCHEMA = "paper_nbody_precision_rank_development_task_v2"
+SCHEMA = "paper_nbody_prism_development_task_v1"
 SOURCE_SCHEMA = "paper_nbody_benchmark_task_v4"
 SOURCE_COMMIT = "076315efdeef4492897651515eaeeed95e8dd863"
 DEVELOPMENT_TASKS = TASKS[:4]
 SOURCE_RANK_EPSILON = torch.finfo(torch.float32).eps
 MAXIMUM_DIRECTION_RANK = 16
+TRUST_RADIUS_SIGMA = 0.025
 
 
 def _git(repo_root: Path, *args: str) -> str:
@@ -100,17 +103,102 @@ def _load_source(path: Path, task_index: int, data_sha256: str) -> dict[str, Any
     return source
 
 
-def _tensor_arrays(prefix: str, prediction: Any) -> dict[str, np.ndarray]:
-    details = prediction.details
-    if details is None or details.mean_gradient is None:
-        raise RuntimeError("ORBIT prediction is missing mean-gradient diagnostics")
+def _build_flops(m: int, rank: int, dimension: int) -> int:
+    return 8 * dimension * m * m + 12 * m**3 + 4 * rank**3
+
+
+def _state_elements(m: int, rank: int, dimension: int) -> int:
+    return 7 * m * m + 2 * m * rank + rank * rank + rank + 2 * m * dimension
+
+
+def _primal_flops(m: int, rank: int, matvecs: int, preconditioners: int) -> int:
+    return matvecs * _orbit_matmul_flops(m, rank) + preconditioners * _preconditioner_flops(
+        m, rank
+    )
+
+
+def _resource_summary(details: Any, dimension: int) -> dict[str, Any]:
+    records = []
+    for index in range(details.mean.shape[0]):
+        base_rank = int(details.base_ranks[index])
+        expanded_rank = int(details.expanded_ranks[index])
+        selected_m = int(details.selected_m[index])
+        selected_rank = expanded_rank if selected_m == 30 else base_rank
+        base_build = _build_flops(20, base_rank, dimension)
+        expanded_build = _build_flops(30, expanded_rank, dimension)
+        base_primal = _primal_flops(
+            20,
+            base_rank,
+            int(details.base_operator_matvecs[index]),
+            int(details.base_preconditioner_applications[index]),
+        )
+        expanded_primal = _primal_flops(
+            30,
+            expanded_rank,
+            int(details.expanded_operator_matvecs[index]),
+            int(details.expanded_preconditioner_applications[index]),
+        )
+        selected_adjoint = _primal_flops(
+            selected_m,
+            selected_rank,
+            int(details.selected_adjoint_operator_matvecs[index]),
+            int(details.selected_adjoint_preconditioner_applications[index]),
+        )
+        pullback = 4 * (
+            _build_flops(selected_m, selected_rank, dimension)
+            + _orbit_matmul_flops(selected_m, selected_rank)
+        )
+        records.append(
+            {
+                "state": 4
+                * (
+                    _state_elements(20, base_rank, dimension)
+                    + _state_elements(30, expanded_rank, dimension)
+                ),
+                "flops": (
+                    base_build
+                    + expanded_build
+                    + base_primal
+                    + expanded_primal
+                    + selected_adjoint
+                    + pullback
+                ),
+            }
+        )
+
+    eligible = details.expanded_eligible
+    expanded_residuals = details.expanded_relative_residuals[eligible]
+    residuals = torch.cat(
+        [
+            details.base_relative_residuals,
+            expanded_residuals,
+            details.selected_adjoint_relative_residuals,
+        ]
+    )
+    all_converged = bool(details.base_converged.all())
+    all_converged = all_converged and bool(details.expanded_converged[eligible].all())
+    all_converged = all_converged and bool(details.selected_adjoint_converged.all())
+    if not all_converged or not bool(torch.isfinite(residuals).all()):
+        raise RuntimeError("PRISM-GP contains a failed or invalid solve")
+    if bool((residuals > ORBIT_CG_TOLERANCE).any()):
+        raise RuntimeError("PRISM-GP fresh residual exceeds the registered tolerance")
     return {
-        f"{prefix}_mean": prediction.mean.detach().cpu().numpy(),
-        f"{prefix}_latent_variance": prediction.latent_variance.detach().cpu().numpy(),
-        f"{prefix}_mean_gradient": details.mean_gradient.detach().cpu().numpy(),
-        f"{prefix}_rank": details.ranks.detach().cpu().numpy(),
-        f"{prefix}_primal_iterations": details.iterations.detach().cpu().numpy(),
-        f"{prefix}_adjoint_iterations": details.adjoint_iterations.detach().cpu().numpy(),
+        "schema": "prism_budgeted_guarded_value_gradient_proxy_v1",
+        "state_accounting": "simultaneous_base_plus_expanded_safety_states",
+        "flop_accounting": "both_builds_and_primals_plus_selected_adjoint_and_pullback",
+        "counted_state_elements_maximum": max(item["state"] for item in records),
+        "counted_flops_mean_per_target": float(np.mean([item["flops"] for item in records])),
+        "counted_flops_maximum_per_target": max(item["flops"] for item in records),
+        "base_rank_minimum": int(details.base_ranks.min()),
+        "base_rank_maximum": int(details.base_ranks.max()),
+        "expanded_rank_minimum": int(details.expanded_ranks.min()),
+        "expanded_rank_maximum": int(details.expanded_ranks.max()),
+        "expanded_eligible_count": int(details.expanded_eligible.sum()),
+        "expanded_selected_count": int(details.use_expanded.sum()),
+        "maximum_fresh_relative_residual": float(residuals.max()),
+        "all_solves_converged": True,
+        "autograd_tape_excludes_cg_iterations": True,
+        "selected_adjoint_only": True,
     }
 
 
@@ -135,47 +223,39 @@ def run_task(
     train = _cast_split(prepared.train, PREDICTION_DTYPE)
     test = _cast_split(prepared.test, PREDICTION_DTYPE)
 
-    base = predict_orbit(
-        train,
+    details = predict_budgeted_guarded_marginals(
+        train.X,
+        train.value,
+        train.gradient,
         test.X,
-        parameters,
-        m=20,
-        cg_tolerance=ORBIT_CG_TOLERANCE,
-        cg_max_iterations=ORBIT_CG_MAX_ITERATIONS,
-        use_preconditioner=True,
-        include_mean_gradient=True,
-    )
-    candidate = predict_orbit(
-        train,
-        test.X,
-        parameters,
-        m=30,
-        rank=MAXIMUM_DIRECTION_RANK,
+        base_m=20,
+        expanded_m=30,
+        maximum_expanded_rank=MAXIMUM_DIRECTION_RANK,
+        trust_radius_sigma=TRUST_RADIUS_SIGMA,
         rank_epsilon=SOURCE_RANK_EPSILON,
+        lengthscale=parameters.lengthscale,
+        outputscale=parameters.outputscale,
+        value_noise_variance=parameters.sigma_f,
+        gradient_noise_variance=parameters.sigma_g,
+        kernel=parameters.kernel,
+        gradient_noise_model=parameters.gradient_noise_model,
         cg_tolerance=ORBIT_CG_TOLERANCE,
         cg_max_iterations=ORBIT_CG_MAX_ITERATIONS,
         use_preconditioner=True,
-        include_mean_gradient=True,
     )
-    if base.details is None or base.details.mean_gradient is None:
-        raise RuntimeError("ORBIT-20 prediction is missing its mean gradient")
-    if candidate.details is None or candidate.details.mean_gradient is None:
-        raise RuntimeError("ORBIT-PA30 prediction is missing its mean gradient")
-
-    base_metrics = _prediction_metrics(
-        base,
-        base.details.mean_gradient,
-        test.value,
-        test.gradient,
+    candidate = ScalarPrediction(
+        mean=details.mean,
+        latent_variance=details.variance,
+        observation_variance=details.variance + details.variance.new_tensor(parameters.sigma_f),
+        details=details,
     )
     candidate_metrics = _prediction_metrics(
         candidate,
-        candidate.details.mean_gradient,
+        details.mean_gradient,
         test.value,
         test.gradient,
     )
-    base_resources = _orbit_resource_summary(base, 20, task.dimension)
-    candidate_resources = _orbit_resource_summary(candidate, 30, task.dimension)
+    candidate_resources = _resource_summary(details, task.dimension)
     tera_resources = _tera_resource_summary(20)
 
     output_root.mkdir(parents=True, exist_ok=True)
@@ -185,8 +265,13 @@ def run_task(
     arrays = {
         "target_value": test.value.detach().cpu().numpy(),
         "target_gradient": test.gradient.detach().cpu().numpy(),
-        **_tensor_arrays("orbit20", base),
-        **_tensor_arrays("orbit_pa30r16", candidate),
+        "prism_mean": details.mean.detach().cpu().numpy(),
+        "prism_latent_variance": details.variance.detach().cpu().numpy(),
+        "prism_mean_gradient": details.mean_gradient.detach().cpu().numpy(),
+        "prism_use_expanded": details.use_expanded.detach().cpu().numpy(),
+        "prism_expanded_eligible": details.expanded_eligible.detach().cpu().numpy(),
+        "prism_expanded_rank": details.expanded_ranks.detach().cpu().numpy(),
+        "prism_normalized_mean_shift": details.normalized_mean_shift.detach().cpu().numpy(),
     }
     np.savez_compressed(arrays_path, **arrays)
 
@@ -205,13 +290,16 @@ def run_task(
             "seed": task.seed,
         },
         "candidate": {
-            "name": "ORBIT-PA30-R16",
+            "name": "PRISM-GP-30/16",
             "description": (
-                "m=30 with source-float32 numerical-rank epsilon, a fixed rank-16 "
-                "direction budget, and float64 solves"
+                "precision-ranked iterative structured marginals with guarded m=30 "
+                "expansion, a rank-16 eligibility budget, and one selected adjoint"
             ),
-            "m": 30,
+            "base_m": 20,
+            "expanded_m": 30,
             "maximum_direction_rank": MAXIMUM_DIRECTION_RANK,
+            "trust_radius_sigma": TRUST_RADIUS_SIGMA,
+            "variance_guard": "expanded_variance_not_above_base_beyond_float64_roundoff",
             "rank_epsilon": SOURCE_RANK_EPSILON,
             "rank_epsilon_source": "torch.float32_input_arrays",
             "prediction_dtype": "float64",
@@ -227,10 +315,6 @@ def run_task(
             },
         },
         "controls": {
-            "rerun_ORBIT_20": {
-                "metrics": base_metrics,
-                "analytic_resources": base_resources,
-            },
             "frozen_TERA_20": {
                 metric: source["arms"]["TERA-20"][metric]
                 for metric in ("value_rmse", "value_nll", "gradient_rmse")
@@ -272,7 +356,7 @@ def main() -> None:
     parser.add_argument(
         "--output-root",
         type=Path,
-        default=Path("runs/paper_nbody_pa30r16_dev_v2"),
+        default=Path("runs/paper_nbody_prism_dev_v1"),
     )
     args = parser.parse_args()
     torch.set_num_threads(8)

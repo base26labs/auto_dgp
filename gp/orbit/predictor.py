@@ -844,6 +844,82 @@ def predict_local_value(
     )
 
 
+def differentiate_solved_local_value_system(
+    system: LocalValueSystem,
+    prediction: LocalPrediction,
+    differentiable_target: torch.Tensor,
+    *,
+    cg_tolerance: float = 1e-6,
+    cg_max_iterations: int | None = None,
+    use_preconditioner: bool = True,
+) -> LocalValueGradientPrediction:
+    """Differentiate a solved system while reusing its primal solve and graph.
+
+    ``system`` must have been built from ``differentiable_target`` with gradient
+    recording enabled.  This lower-level entry point lets a caller build and
+    solve several scalar conditionals, select one without labels, and pay for
+    only the selected adjoint.  The CG iteration tapes remain outside autograd.
+    """
+
+    if not isinstance(system, LocalValueSystem):
+        raise TypeError("system must be a LocalValueSystem")
+    if not isinstance(prediction, LocalPrediction):
+        raise TypeError("prediction must be a LocalPrediction")
+    if prediction.rank != system.geometry.rank:
+        raise ValueError("prediction rank does not match the solved system")
+    if (
+        differentiable_target.ndim != 2
+        or differentiable_target.shape[0] != 1
+        or not differentiable_target.requires_grad
+    ):
+        raise ValueError("differentiable_target must have shape (1, d) and require gradients")
+
+    with torch.enable_grad():
+        with torch.no_grad():
+            if system.geometry.rank == 0:
+                adjoint_solve = prediction.solve
+            else:
+                if system.operator is None:
+                    raise RuntimeError("nonzero-rank system is missing its operator")
+                preconditioner = system.preconditioner if use_preconditioner else None
+                adjoint_solve = solve_reduced_cg(
+                    system.operator,
+                    system.conditional_observation_functional,
+                    tolerance=cg_tolerance,
+                    max_iterations=cg_max_iterations,
+                    preconditioner=preconditioner,
+                    operator_norm_upper_bound=system.operator_norm_upper_bound,
+                )
+
+        if system.geometry.rank == 0:
+            differentiable_mean = system.base_mean
+        else:
+            if system.operator is None:
+                raise RuntimeError("nonzero-rank system is missing its operator")
+            primal = prediction.solve.solution.detach()
+            adjoint = adjoint_solve.solution.detach()
+            primal_residual_expression = system.conditional_cross - system.operator.matmul(primal)
+            differentiable_mean = system.base_mean
+            differentiable_mean = differentiable_mean + torch.dot(
+                primal,
+                system.conditional_observation_functional,
+            )
+            differentiable_mean = differentiable_mean + torch.dot(
+                adjoint,
+                primal_residual_expression,
+            )
+        mean_gradient = torch.autograd.grad(
+            differentiable_mean,
+            differentiable_target,
+        )[0].squeeze(0)
+
+    return LocalValueGradientPrediction(
+        prediction=prediction,
+        mean_gradient=mean_gradient.detach(),
+        adjoint_solve=adjoint_solve,
+    )
+
+
 def predict_local_value_and_mean_gradient(
     x_condition: torch.Tensor,
     value_condition: torch.Tensor,
@@ -903,48 +979,14 @@ def predict_local_value_and_mean_gradient(
                 max_iterations=cg_max_iterations,
                 use_preconditioner=use_preconditioner,
             )
-            if system.geometry.rank == 0:
-                adjoint_solve = prediction.solve
-            else:
-                if system.operator is None:
-                    raise RuntimeError("nonzero-rank system is missing its operator")
-                preconditioner = system.preconditioner if use_preconditioner else None
-                adjoint_solve = solve_reduced_cg(
-                    system.operator,
-                    system.conditional_observation_functional,
-                    tolerance=cg_tolerance,
-                    max_iterations=cg_max_iterations,
-                    preconditioner=preconditioner,
-                    operator_norm_upper_bound=system.operator_norm_upper_bound,
-                )
-
-        if system.geometry.rank == 0:
-            differentiable_mean = system.base_mean
-        else:
-            if system.operator is None:
-                raise RuntimeError("nonzero-rank system is missing its operator")
-            primal = prediction.solve.solution.detach()
-            adjoint = adjoint_solve.solution.detach()
-            primal_residual_expression = system.conditional_cross - system.operator.matmul(primal)
-            differentiable_mean = system.base_mean
-            differentiable_mean = differentiable_mean + torch.dot(
-                primal,
-                system.conditional_observation_functional,
-            )
-            differentiable_mean = differentiable_mean + torch.dot(
-                adjoint,
-                primal_residual_expression,
-            )
-        mean_gradient = torch.autograd.grad(
-            differentiable_mean,
+        return differentiate_solved_local_value_system(
+            system,
+            prediction,
             differentiable_target,
-        )[0].squeeze(0)
-
-    return LocalValueGradientPrediction(
-        prediction=prediction,
-        mean_gradient=mean_gradient.detach(),
-        adjoint_solve=adjoint_solve,
-    )
+            cg_tolerance=cg_tolerance,
+            cg_max_iterations=cg_max_iterations,
+            use_preconditioner=use_preconditioner,
+        )
 
 
 def predict_marginal_values(
