@@ -50,9 +50,12 @@ byte-identical snapshot for bundle authorization and loading rather than reopeni
 arbitrary-precision fixture certifies posterior moments only for a caller-supplied support basis and
 coordinates; support construction, rank, and cutoff remain N0 obligations.  The audited reusable
 ORBIT system and authenticated two-phase N0/ORBIT32/ORBIT64 execution path are present and locally
-tested.  The support64/full-q/stress adapters, immutable probe artifact writer, strict 122-slot
-intake, discovery/locked-holdout threshold workflow, and probe Slurm runner remain incomplete.  This
-checkpoint therefore still authorizes no Slurm submission and no confirmatory access.
+tested.  The independent support64 adapter now consumes only the exact-promoted CPU-float64 arm,
+registered neighbours, selected N0 strata, and the frozen absolute source-fp32 cutoff.  Completed
+target evidence can be copied immediately into immutable canonical bytes with a raw SHA-256.  The
+full-q/stress adapters, strict 122-slot intake and aggregate, discovery/locked-holdout threshold
+workflow, and probe Slurm runner remain incomplete.  This checkpoint therefore still authorizes no
+Slurm submission and no confirmatory access.
 
 The earlier v3 artifact from job 2810629 motivated the strata and fault tests but is excluded from
 fitting numerical thresholds.  In particular, its observed errors may not be rounded upward and

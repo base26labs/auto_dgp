@@ -10,6 +10,12 @@ import experiments.f02b_calibration_probe_execution as execution_module
 from cluster.f02b_calibration_grid import probe_task_for_index
 from experiments.f02_design import EVALUATION_TIME_INDICES
 from experiments.f02_internal_models import FrozenTERAParameters, TensorConfirmatorySplit
+from experiments.f02b_calibration_probe_artifact import (
+    PROBE_TARGET_ARTIFACT_SCHEMA_VERSION,
+    ProbeTargetArtifactError,
+    build_canonical_probe_target_artifact,
+    parse_canonical_probe_target_artifact,
+)
 from experiments.f02b_calibration_probe_core import (
     FP64_ONLY_TOLERANCE_SWEEP,
     PRIMARY_EVALUATION_ROW_COUNT,
@@ -29,9 +35,11 @@ from experiments.f02b_calibration_probe_execution import (
     RegisteredOrbitArmInputs,
     RegisteredOrbitStrata,
     RegisteredSourceGeometry,
+    Support64TargetExecution,
     build_source_orbit_arm_inputs,
     evaluation_rows_to_tensors,
     execute_registered_orbit_target,
+    execute_registered_support64_target,
     promote_evaluation_to_float64,
     promote_parameters_to_float64,
     promote_registered_orbit_arm_to_float64,
@@ -417,6 +425,149 @@ def test_float64_target_consumes_the_exact_source_fp32_cutoff() -> None:
         )
 
 
+def test_support64_selected_target_uses_bound_cutoff_and_matches_orbit64(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    arm32 = _synthetic_arm(torch.float32)
+    geometries, strata = _geometry_and_strata(arm32)
+    target_position = strata.selected_target_positions[0]
+    source_geometry = geometries[target_position]
+    arm64 = promote_registered_orbit_arm_to_float64(arm32)
+    observed_cutoffs: list[float] = []
+    original = execution_module.predict_local_dense_support
+
+    def recording_oracle(*args, **kwargs):
+        observed_cutoffs.append(kwargs["absolute_rank_cutoff"])
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(
+        execution_module,
+        "predict_local_dense_support",
+        recording_oracle,
+    )
+    support = execute_registered_support64_target(
+        arm64,
+        source_geometry,
+        strata,
+    )
+    orbit = execute_registered_orbit_target(
+        arm64,
+        source_geometry,
+        strata,
+    )
+
+    assert isinstance(support, Support64TargetExecution)
+    source_cutoff = float(source_geometry.geometry.operational_singular_value_cutoff)
+    assert observed_cutoffs == [source_cutoff]
+    assert support.cutoff_provenance == "registered_N0_source_fp32_absolute_cutoff"
+    assert support.compute_dtype == torch.float64
+    assert support.source_arm_binding_sha256 == arm32.source_arm_binding_sha256
+    assert support.source_rank_reference_sha256 == source_geometry.source_rank_reference_sha256
+    assert support.source_rank_grid_sha256 == strata.source_rank_grid_sha256
+    assert support.strata_selection_sha256 == strata.selection_sha256
+    assert support.rank_boundary["strict_selected_rank"] == 6
+    assert support.rank_boundary["source_fp32_strict_selected_rank"] == 6
+    assert support.rank_boundary["operational_rank_matches_source_fp32_rank"] is True
+    assert support.rank_boundary["rank_evidence_source"] == (
+        "independent_dense_support64_direct_svd"
+    )
+    assert support.prediction.diagnostics.rank_threshold == source_cutoff
+    assert support.prediction.diagnostics.support_relative_solve_residual <= 1e-10
+    torch.testing.assert_close(
+        support.ambient_scaled_difference_support_projector,
+        support.ambient_scaled_difference_support_projector.T,
+        rtol=0.0,
+        atol=1e-12,
+    )
+    torch.testing.assert_close(
+        support.q_coordinate_support_projector,
+        support.q_coordinate_support_projector.T,
+        rtol=0.0,
+        atol=1e-12,
+    )
+    tight_orbit = orbit.solves[-1].prediction
+    assert tight_orbit.solve.converged
+    torch.testing.assert_close(
+        support.prediction.mean,
+        tight_orbit.mean,
+        rtol=2e-8,
+        atol=2e-8,
+    )
+    torch.testing.assert_close(
+        support.prediction.latent_variance,
+        tight_orbit.variance,
+        rtol=2e-8,
+        atol=2e-8,
+    )
+
+
+def test_support64_rejects_fp32_and_non_stratum_targets() -> None:
+    arm32 = _synthetic_arm(torch.float32)
+    geometries, strata = _geometry_and_strata(arm32)
+    selected = strata.selected_target_positions[0]
+    with pytest.raises(ProbeExecutionInputError, match="CPU-float64"):
+        execute_registered_support64_target(arm32, geometries[selected], strata)
+
+    unselected = next(
+        position
+        for position in range(PRIMARY_EVALUATION_ROW_COUNT)
+        if position not in strata.selected_target_positions
+    )
+    arm64 = promote_registered_orbit_arm_to_float64(arm32)
+    with pytest.raises(ProbeExecutionInputError, match="only for geometry-selected"):
+        execute_registered_support64_target(arm64, geometries[unselected], strata)
+
+
+def test_support64_revalidates_source_geometry_after_dense_solve(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    arm32 = _synthetic_arm(torch.float32)
+    geometries, strata = _geometry_and_strata(arm32)
+    target_position = strata.selected_target_positions[0]
+    source_geometry = geometries[target_position]
+    arm64 = promote_registered_orbit_arm_to_float64(arm32)
+    original = execution_module.predict_local_dense_support
+
+    def mutating_oracle(*args, **kwargs):
+        prediction = original(*args, **kwargs)
+        source_geometry.rank_boundary["target_source_index"] += 1
+        return prediction
+
+    monkeypatch.setattr(
+        execution_module,
+        "predict_local_dense_support",
+        mutating_oracle,
+    )
+    with pytest.raises(ProbeExecutionEvidenceError, match="rank record"):
+        execute_registered_support64_target(arm64, source_geometry, strata)
+
+
+def test_support64_rejects_an_oracle_that_recomputes_its_cutoff(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    arm32 = _synthetic_arm(torch.float32)
+    geometries, strata = _geometry_and_strata(arm32)
+    target_position = strata.selected_target_positions[0]
+    arm64 = promote_registered_orbit_arm_to_float64(arm32)
+    original = execution_module.predict_local_dense_support
+
+    def drifting_oracle(*args, **kwargs):
+        kwargs.pop("absolute_rank_cutoff")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(
+        execution_module,
+        "predict_local_dense_support",
+        drifting_oracle,
+    )
+    with pytest.raises(ProbeExecutionEvidenceError, match="registered source-fp32 cutoff"):
+        execute_registered_support64_target(
+            arm64,
+            geometries[target_position],
+            strata,
+        )
+
+
 def test_float64_arm_rejects_post_factory_mutation() -> None:
     arm = _synthetic_arm(torch.float64)
     assert arm.train.X.dtype == torch.float64
@@ -730,4 +881,135 @@ def test_registered_arm_direct_construction_is_rejected() -> None:
             source_arm_binding_sha256=arm.source_arm_binding_sha256,
             binding_kind=arm.binding_kind,
             _construction_token=object(),
+        )
+
+
+def test_canonical_target_artifact_detaches_from_mutable_execution_evidence() -> None:
+    arm = _synthetic_arm(torch.float32)
+    geometries, strata = _geometry_and_strata(arm)
+    target_position = next(
+        position
+        for position in range(PRIMARY_EVALUATION_ROW_COUNT)
+        if position not in strata.selected_target_positions
+    )
+    execution = execute_registered_orbit_target(
+        arm,
+        geometries[target_position],
+        strata,
+    )
+    artifact = build_canonical_probe_target_artifact(execution)
+    parsed = parse_canonical_probe_target_artifact(
+        artifact.payload_bytes,
+        expected_sha256=artifact.payload_sha256,
+    )
+
+    assert parsed["schema_version"] == PROBE_TARGET_ARTIFACT_SCHEMA_VERSION
+    assert parsed["task_index"] == execution.task_index
+    assert parsed["target_position"] == target_position
+    assert parsed["support64"] is None
+    assert parsed["orbit"]["compute_dtype"] == "float32"
+    assert len(parsed["orbit"]["solves"]) == 1
+    assert parsed["orbit"]["system"]["conditional_cross"]["dtype"] == "float32"
+    assert parsed["orbit"]["system"]["operator"]["present"] is True
+
+    frozen_bytes = artifact.payload_bytes
+    frozen_sha256 = artifact.payload_sha256
+    execution.rank_boundary["rank_matches_expected"] = False
+    with torch.inference_mode():
+        execution.solves[0].prediction.solve.solution.data[0] += 100.0
+        execution.system.conditional_cross.data[0] += 100.0
+    assert artifact.payload_bytes == frozen_bytes
+    assert artifact.payload_sha256 == frozen_sha256
+    assert parse_canonical_probe_target_artifact(frozen_bytes) == parsed
+
+
+def test_canonical_target_artifact_binds_matching_support64() -> None:
+    arm32 = _synthetic_arm(torch.float32)
+    geometries, strata = _geometry_and_strata(arm32)
+    target_position = strata.selected_target_positions[0]
+    arm64 = promote_registered_orbit_arm_to_float64(arm32)
+    orbit = execute_registered_orbit_target(
+        arm64,
+        geometries[target_position],
+        strata,
+    )
+    support = execute_registered_support64_target(
+        arm64,
+        geometries[target_position],
+        strata,
+    )
+    artifact = build_canonical_probe_target_artifact(orbit, support64=support)
+    parsed = parse_canonical_probe_target_artifact(
+        artifact.payload_bytes,
+        expected_sha256=artifact.payload_sha256,
+    )
+
+    assert parsed["orbit"]["compute_dtype"] == "float64"
+    assert parsed["support64"]["compute_dtype"] == "float64"
+    assert parsed["support64"]["cutoff_provenance"] == (
+        "registered_N0_source_fp32_absolute_cutoff"
+    )
+    assert parsed["support64"]["prediction"]["diagnostics"]["rank_threshold"] == (
+        support.prediction.diagnostics.rank_threshold
+    )
+    assert parsed["support64"]["q_coordinate_support_projector"]["shape"] == [20, 20]
+
+    mismatched = replace(support, target_position=support.target_position + 1)
+    with pytest.raises(ProbeTargetArtifactError, match="identity"):
+        build_canonical_probe_target_artifact(orbit, support64=mismatched)
+
+
+def test_canonical_target_artifact_rejects_nonfinite_or_inconsistent_evidence() -> None:
+    arm = _synthetic_arm(torch.float32)
+    geometries, strata = _geometry_and_strata(arm)
+    target_position = next(
+        position
+        for position in range(PRIMARY_EVALUATION_ROW_COUNT)
+        if position not in strata.selected_target_positions
+    )
+    execution = execute_registered_orbit_target(
+        arm,
+        geometries[target_position],
+        strata,
+    )
+    execution.rank_boundary["tampered_nan"] = float("nan")
+    with pytest.raises(ProbeTargetArtifactError, match="NaN"):
+        build_canonical_probe_target_artifact(execution)
+
+    execution = execute_registered_orbit_target(
+        arm,
+        geometries[target_position],
+        strata,
+    )
+    with torch.inference_mode():
+        execution.solves[0].verified_residual.data[0] += 1.0
+    with pytest.raises(ProbeTargetArtifactError, match="inconsistent"):
+        build_canonical_probe_target_artifact(execution)
+
+
+def test_canonical_target_artifact_parser_rejects_noncanonical_duplicate_and_hash_drift() -> None:
+    arm = _synthetic_arm(torch.float32)
+    geometries, strata = _geometry_and_strata(arm)
+    target_position = next(
+        position
+        for position in range(PRIMARY_EVALUATION_ROW_COUNT)
+        if position not in strata.selected_target_positions
+    )
+    execution = execute_registered_orbit_target(
+        arm,
+        geometries[target_position],
+        strata,
+    )
+    artifact = build_canonical_probe_target_artifact(execution)
+
+    with pytest.raises(ProbeTargetArtifactError, match="canonically"):
+        parse_canonical_probe_target_artifact(artifact.payload_bytes + b"\n")
+    with pytest.raises(ProbeTargetArtifactError, match="strict canonical"):
+        parse_canonical_probe_target_artifact(
+            b'{"schema_version":1,"schema_version":2}'
+        )
+    with pytest.raises(ProbeTargetArtifactError, match="SHA-256"):
+        parse_canonical_probe_target_artifact(
+            artifact.payload_bytes,
+            expected_sha256="0" * 64,
         )

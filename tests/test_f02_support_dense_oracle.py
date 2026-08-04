@@ -559,6 +559,39 @@ def test_weak_source_modes_use_the_same_fixed_cutoff_in_oracle_and_orbit64() -> 
     )
 
 
+def test_absolute_source_cutoff_is_strict_and_records_native_rank() -> None:
+    cutoff32 = torch.tensor(0.5, dtype=torch.float32)
+    above32 = torch.nextafter(cutoff32, torch.tensor(float("inf"), dtype=torch.float32))
+    x = torch.diag(torch.stack([torch.tensor(1.0), above32, cutoff32])).to(torch.float64)
+    target = torch.zeros(1, 3, dtype=torch.float64)
+    values = torch.tensor([0.2, -0.4, 0.7], dtype=torch.float64)
+    gradients = torch.tensor(
+        [[0.3, -0.2, 0.1], [0.5, 0.7, -0.6], [-0.1, 0.4, 0.8]],
+        dtype=torch.float64,
+    )
+    prediction = predict_local_dense_support(
+        x,
+        values,
+        gradients,
+        target,
+        lengthscale=torch.ones(1, dtype=torch.float64),
+        outputscale=1.2,
+        value_noise_variance=0.03,
+        gradient_noise_variance=0.04,
+        kernel="rbf",
+        absolute_rank_cutoff=float(cutoff32),
+    )
+
+    diagnostics = prediction.diagnostics
+    assert diagnostics.rank_threshold == float(cutoff32)
+    assert diagnostics.rank_threshold_source == (
+        "caller_bound_absolute_source_fp32_cutoff"
+    )
+    assert diagnostics.numerical_rank == 2
+    assert diagnostics.native_compute_numerical_rank == 3
+    assert prediction.support_basis.shape == (3, 2)
+
+
 def test_full_q_dense_support_oracle_matches_direct_released_tera64():
     raw_x, raw_values, raw_gradients, raw_target = _full_rank_fixture(seed=41)
     x = _quantized64(raw_x)
@@ -807,6 +840,7 @@ def test_prediction_is_invariant_to_exactly_null_ambient_augmentation():
             {"function_jitter": 1e-3, "maximum_function_jitter": 1e-4},
             "jitter bounds",
         ),
+        ({"absolute_rank_cutoff": -1e-3}, "finite non-negative scalar"),
     ],
 )
 def test_oracle_fails_closed_on_invalid_numeric_contract(change, message):

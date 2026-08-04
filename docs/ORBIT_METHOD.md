@@ -74,6 +74,12 @@ public predictor always derives geometry from its current inputs; the calibratio
 may skip a second fp32 SVD only after the source differences, complete rank evidence, and content
 digests have been authenticated.
 
+The independent support64 oracle follows the same operational rule without importing ORBIT: it
+performs its own fp64 SVD on exactly promoted source-quantized inputs, but receives the authenticated
+absolute fp32 cutoff rather than recomputing one from its fp64 spectrum.  Its separately reported
+native fp64 cutoff/rank remains diagnostic, and a support64/source-rank mismatch is retained as a
+scientific failure rather than silently changing the selected support.
+
 This is an exact removal of algebraic redundancy only.  For generic high-dimensional neighbourhoods
 with `d ≥ m`, `r=m`; in that regime there is no dimensional compression.  Dropping any positive mode
 is a distinct approximate method and is not part of `ORBIT-exact`.

@@ -12,6 +12,9 @@ tolerance as an independent zero-start solve.  The production ``1e-5`` result
 is the object already present in that sweep.  An additional operator
 application immediately recomputes ``A(x)`` and ``b-A(x)`` for evidence; the
 source-dtype result is diagnostic rather than a directed-rounding certificate.
+The companion :func:`execute_registered_support64_target` is available only
+for registered strata on the exact-promoted CPU-float64 arm and consumes the
+absolute cutoff already bound by the source-fp32 geometry scan.
 """
 
 from __future__ import annotations
@@ -28,6 +31,11 @@ import torch
 from cluster.f02b_calibration_grid import probe_task_for_index
 from experiments.f02_design import EVALUATION_TIME_INDICES
 from experiments.f02_internal_models import FrozenTERAParameters, TensorConfirmatorySplit
+from experiments.f02_support_dense_oracle import (
+    RANK_RULE_NAME,
+    DenseSupportPrediction,
+    predict_local_dense_support,
+)
 from experiments.f02b_calibration_metrics import (
     cholesky_backward_error_metrics,
     matrix_free_solve_error_metrics,
@@ -916,6 +924,27 @@ class OrbitTargetExecution:
         return matches[0]
 
 
+@dataclass(frozen=True, slots=True)
+class Support64TargetExecution:
+    """One registered stratum target evaluated by the independent dense oracle."""
+
+    task_index: int
+    source_arm_binding_sha256: str
+    source_rank_reference_sha256: str
+    source_rank_grid_sha256: str
+    strata_selection_sha256: str
+    target_position: int
+    target_source_index: int
+    neighbour_positions: torch.Tensor
+    neighbour_source_indices: torch.Tensor
+    compute_dtype: torch.dtype
+    prediction: DenseSupportPrediction
+    rank_boundary: dict[str, Any]
+    ambient_scaled_difference_support_projector: torch.Tensor
+    q_coordinate_support_projector: torch.Tensor
+    cutoff_provenance: str
+
+
 def _validate_target_position(value: int, count: int) -> int:
     if type(value) is not int or not 0 <= value < count:
         raise ProbeExecutionInputError(f"target_position must lie in [0, {count})")
@@ -1587,6 +1616,233 @@ def execute_registered_orbit_target(
     return result
 
 
+def _support64_rank_record(
+    prediction: DenseSupportPrediction,
+    *,
+    expected_rank: int,
+    source_fp32_cutoff: float,
+    source_fp32_selected_rank: int,
+) -> dict[str, Any]:
+    diagnostics = prediction.diagnostics
+    if (
+        diagnostics.source_quantization_dtype != "float32"
+        or diagnostics.compute_dtype != "float64"
+        or diagnostics.rank_rule_name != RANK_RULE_NAME
+        or diagnostics.rank_threshold_source
+        != "caller_bound_absolute_source_fp32_cutoff"
+        or diagnostics.rank_threshold != source_fp32_cutoff
+    ):
+        raise ProbeExecutionEvidenceError(
+            "support64 did not consume the registered source-fp32 cutoff"
+        )
+    singular_values = torch.tensor(
+        diagnostics.singular_values,
+        dtype=torch.float64,
+        device=prediction.mean.device,
+    )
+    cutoff = singular_values.new_tensor(source_fp32_cutoff)
+    result = rank_boundary_metrics(
+        singular_values,
+        cutoff=cutoff,
+        expected_rank=expected_rank,
+    )
+    if result["strict_selected_rank"] != diagnostics.numerical_rank:
+        raise ProbeExecutionEvidenceError(
+            "support64 rank record disagrees with the dense oracle support"
+        )
+    native_cutoff = singular_values.new_tensor(
+        diagnostics.native_compute_rank_threshold
+    )
+    native_rank = int((singular_values > native_cutoff).sum().item())
+    if native_rank != diagnostics.native_compute_numerical_rank:
+        raise ProbeExecutionEvidenceError(
+            "support64 native-rank diagnostics are inconsistent"
+        )
+    result.update(
+        {
+            "rank_evidence_source": "independent_dense_support64_direct_svd",
+            "rank_epsilon_source_dtype": "float32",
+            "rank_epsilon": SOURCE_RANK_EPSILON,
+            "source_fp32_operational_cutoff": source_fp32_cutoff,
+            "source_fp32_strict_selected_rank": source_fp32_selected_rank,
+            "operational_cutoff_is_source_fp32_bound": True,
+            "operational_cutoff_source": diagnostics.rank_threshold_source,
+            "compute_singular_value_dtype": "float64",
+            "native_compute_cutoff": diagnostics.native_compute_rank_threshold,
+            "native_compute_strict_selected_rank": native_rank,
+            "operational_rank_matches_source_fp32_rank": (
+                diagnostics.numerical_rank == source_fp32_selected_rank
+            ),
+            "native_compute_rank_matches_expected": native_rank == expected_rank,
+            "operational_minus_native_selected_rank": (
+                diagnostics.numerical_rank - native_rank
+            ),
+        }
+    )
+    return result
+
+
+def _snapshot_dense_support_prediction(
+    prediction: DenseSupportPrediction,
+) -> DenseSupportPrediction:
+    return DenseSupportPrediction(
+        mean=prediction.mean.detach().clone().contiguous(),
+        latent_variance=prediction.latent_variance.detach().clone().contiguous(),
+        value_only_conditional_variance=(
+            prediction.value_only_conditional_variance.detach().clone().contiguous()
+        ),
+        gradient_variance_reduction=(
+            prediction.gradient_variance_reduction.detach().clone().contiguous()
+        ),
+        support_basis=prediction.support_basis.detach().clone().contiguous(),
+        support_coordinates=(
+            prediction.support_coordinates.detach().clone().contiguous()
+        ),
+        tera_to_support=prediction.tera_to_support.detach().clone().contiguous(),
+        diagnostics=prediction.diagnostics,
+    )
+
+
+def execute_registered_support64_target(
+    arm: RegisteredOrbitArmInputs,
+    source_geometry: RegisteredSourceGeometry,
+    strata: RegisteredOrbitStrata,
+) -> Support64TargetExecution:
+    """Execute support64 only for a target selected by the registered N0 strata."""
+
+    if type(arm) is not RegisteredOrbitArmInputs:
+        raise ProbeExecutionInputError("arm must be registered ORBIT inputs")
+    arm.assert_unchanged()
+    if arm.train.X.dtype != torch.float64 or arm.train.X.device.type != "cpu":
+        raise ProbeExecutionInputError(
+            "support64 requires the exact-promoted CPU-float64 arm"
+        )
+    if type(source_geometry) is not RegisteredSourceGeometry:
+        raise ProbeExecutionInputError("source_geometry must be registered N0 evidence")
+    position = _validate_target_position(
+        source_geometry.target_position,
+        arm.evaluation.X.shape[0],
+    )
+    source_cutoff, source_selected_rank, source_reference_sha256 = (
+        _validate_source_geometry_reference(
+            arm,
+            source_geometry,
+            target_position=position,
+        )
+    )
+    if not _validate_registered_strata(arm, source_geometry, strata):
+        raise ProbeExecutionInputError(
+            "support64 is registered only for geometry-selected strata targets"
+        )
+    neighbour_positions = arm.fixed_neighbours.positions[position]
+    neighbour_sources = arm.fixed_neighbours.source_indices[position]
+    target = arm.evaluation.X[position].unsqueeze(0)
+    with torch.inference_mode():
+        prediction = predict_local_dense_support(
+            arm.train.X[neighbour_positions],
+            arm.train.value[neighbour_positions],
+            arm.train.gradient[neighbour_positions],
+            target,
+            lengthscale=arm.parameters.lengthscale,
+            outputscale=arm.parameters.outputscale,
+            value_noise_variance=arm.parameters.sigma_f,
+            gradient_noise_variance=arm.parameters.sigma_g,
+            kernel=arm.parameters.kernel,
+            gradient_noise_model=arm.parameters.gradient_noise_model,
+            function_jitter=SOURCE_FUNCTION_JITTER,
+            support_coordinate_jitter=SOURCE_REDUCED_JITTER,
+            absolute_rank_cutoff=source_cutoff,
+        )
+    prediction = _snapshot_dense_support_prediction(prediction)
+    rank_record = _support64_rank_record(
+        prediction,
+        expected_rank=arm.work_plan.physical_rank,
+        source_fp32_cutoff=source_cutoff,
+        source_fp32_selected_rank=source_selected_rank,
+    )
+    rank = prediction.diagnostics.numerical_rank
+    dimension = arm.train.X.shape[1]
+    m = arm.work_plan.production_m
+    expected_shapes = {
+        "support_basis": (dimension, rank),
+        "support_coordinates": (m, rank),
+        "tera_to_support": (m, rank),
+    }
+    for name, shape in expected_shapes.items():
+        value = getattr(prediction, name)
+        if (
+            value.shape != shape
+            or value.dtype != torch.float64
+            or value.device.type != "cpu"
+            or not bool(torch.isfinite(value).all().item())
+        ):
+            raise ProbeExecutionEvidenceError(
+                f"support64 {name} violates the registered shape/dtype/device contract"
+            )
+    for name in (
+        "mean",
+        "latent_variance",
+        "value_only_conditional_variance",
+        "gradient_variance_reduction",
+    ):
+        value = getattr(prediction, name)
+        if (
+            value.shape != torch.Size([])
+            or value.dtype != torch.float64
+            or value.device.type != "cpu"
+            or not bool(torch.isfinite(value).item())
+        ):
+            raise ProbeExecutionEvidenceError(
+                f"support64 {name} is not a finite CPU-float64 scalar"
+            )
+    ambient_projector = prediction.support_basis @ prediction.support_basis.T
+    q_projector = prediction.support_coordinates @ prediction.tera_to_support.T
+    if not bool(torch.isfinite(ambient_projector).all().item()) or not bool(
+        torch.isfinite(q_projector).all().item()
+    ):
+        raise ProbeExecutionEvidenceError("support64 projectors are nonfinite")
+
+    arm.assert_unchanged()
+    post_cutoff, post_selected_rank, post_reference_sha256 = (
+        _validate_source_geometry_reference(
+            arm,
+            source_geometry,
+            target_position=position,
+        )
+    )
+    if (
+        post_cutoff != source_cutoff
+        or post_selected_rank != source_selected_rank
+        or post_reference_sha256 != source_reference_sha256
+    ):
+        raise ProbeExecutionEvidenceError(
+            "source geometry changed during registered support64 execution"
+        )
+    if not _validate_registered_strata(arm, source_geometry, strata):
+        raise ProbeExecutionEvidenceError(
+            "registered stratum role changed during support64 execution"
+        )
+    return Support64TargetExecution(
+        task_index=arm.work_plan.task_index,
+        source_arm_binding_sha256=arm.source_arm_binding_sha256,
+        source_rank_reference_sha256=source_reference_sha256,
+        source_rank_grid_sha256=strata.source_rank_grid_sha256,
+        strata_selection_sha256=strata.selection_sha256,
+        target_position=position,
+        target_source_index=int(arm.evaluation.source_indices[position].item()),
+        neighbour_positions=neighbour_positions.detach().clone().contiguous(),
+        neighbour_source_indices=neighbour_sources.detach().clone().contiguous(),
+        compute_dtype=torch.float64,
+        prediction=prediction,
+        rank_boundary=rank_record,
+        ambient_scaled_difference_support_projector=(
+            ambient_projector.detach().clone().contiguous()
+        ),
+        q_coordinate_support_projector=q_projector.detach().clone().contiguous(),
+        cutoff_provenance="registered_N0_source_fp32_absolute_cutoff",
+    )
+
+
 __all__ = [
     "LabelFreeEvaluationTensors",
     "MATRIX_FREE_ROUNDOFF_QUALIFICATION",
@@ -1603,9 +1859,11 @@ __all__ = [
     "SOURCE_FUNCTION_JITTER",
     "SOURCE_RANK_EPSILON",
     "SOURCE_REDUCED_JITTER",
+    "Support64TargetExecution",
     "build_source_orbit_arm_inputs",
     "evaluation_rows_to_tensors",
     "execute_registered_orbit_target",
+    "execute_registered_support64_target",
     "promote_evaluation_to_float64",
     "promote_parameters_to_float64",
     "promote_registered_orbit_arm_to_float64",

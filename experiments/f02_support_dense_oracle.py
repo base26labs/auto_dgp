@@ -45,7 +45,10 @@ class DenseSupportDiagnostics:
     rank_tolerance_multiplier: float
     source_machine_epsilon: float
     rank_threshold: float
+    rank_threshold_source: str
     numerical_rank: int
+    native_compute_rank_threshold: float
+    native_compute_numerical_rank: int
     maximum_rank: int
     singular_values: tuple[float, ...]
     discarded_singular_value_energy: float
@@ -309,13 +312,16 @@ def predict_local_dense_support(
     function_jitter: float = 1e-8,
     maximum_function_jitter: float = 1e-1,
     support_coordinate_jitter: float = 1e-8,
+    absolute_rank_cutoff: float | None = None,
 ) -> DenseSupportPrediction:
     """Evaluate one TERA local conditional via an explicit dense support solve.
 
     The support-coordinate jitter is the image of TERA's fixed ``epsilon I``
     under the rank-revealing change of coordinates.  It is never adaptively
     increased: a failed support Cholesky is a failed diagnostic, not a silently
-    changed posterior.
+    changed posterior.  When ``absolute_rank_cutoff`` is supplied, support
+    selection uses that represented cutoff with the strict rule ``s > cutoff``;
+    this is the registered F02b path that binds an earlier source-fp32 SVD.
     """
 
     if kernel not in {"rbf", "matern52"}:
@@ -352,6 +358,17 @@ def predict_local_dense_support(
             device=x64.device,
         )
     )
+    absolute_rank_cutoff64 = (
+        None
+        if absolute_rank_cutoff is None
+        else float(
+            _nonnegative_scalar(
+                absolute_rank_cutoff,
+                "absolute_rank_cutoff",
+                device=x64.device,
+            )
+        )
+    )
     m, dimension = x64.shape
     raw_differences = (x64 - target64).T.contiguous()
     if lengthscale64.numel() == 1:
@@ -366,9 +383,26 @@ def predict_local_dense_support(
     maximum_rank = min(dimension, m)
     largest = singular_values[0]
     source_epsilon = float(torch.finfo(SOURCE_DTYPE).eps)
-    rank_threshold_tensor = largest * max(dimension, m) * source_epsilon * RANK_TOLERANCE_MULTIPLIER
+    derived_source_threshold = (
+        largest
+        * max(dimension, m)
+        * source_epsilon
+        * RANK_TOLERANCE_MULTIPLIER
+    )
+    if absolute_rank_cutoff64 is None:
+        rank_threshold_tensor = derived_source_threshold
+        rank_threshold_source = "quantized_input_smax_maxshape_eps32"
+    else:
+        rank_threshold_tensor = singular_values.new_tensor(absolute_rank_cutoff64)
+        rank_threshold_source = "caller_bound_absolute_source_fp32_cutoff"
+    native_rank_threshold_tensor = (
+        largest * max(dimension, m) * torch.finfo(COMPUTE_DTYPE).eps
+    )
     keep = singular_values > rank_threshold_tensor
     numerical_rank = int(keep.sum().item())
+    native_compute_numerical_rank = int(
+        (singular_values > native_rank_threshold_tensor).sum().item()
+    )
     retained_left = left[:, keep]
     retained_singular = singular_values[keep]
     retained_right = right_transpose[keep].T
@@ -431,7 +465,10 @@ def predict_local_dense_support(
             rank_tolerance_multiplier=RANK_TOLERANCE_MULTIPLIER,
             source_machine_epsilon=source_epsilon,
             rank_threshold=float(rank_threshold_tensor),
+            rank_threshold_source=rank_threshold_source,
             numerical_rank=0,
+            native_compute_rank_threshold=float(native_rank_threshold_tensor),
+            native_compute_numerical_rank=native_compute_numerical_rank,
             maximum_rank=maximum_rank,
             singular_values=_as_float_tuple(singular_values),
             discarded_singular_value_energy=discarded_energy,
@@ -579,7 +616,10 @@ def predict_local_dense_support(
         rank_tolerance_multiplier=RANK_TOLERANCE_MULTIPLIER,
         source_machine_epsilon=source_epsilon,
         rank_threshold=float(rank_threshold_tensor),
+        rank_threshold_source=rank_threshold_source,
         numerical_rank=numerical_rank,
+        native_compute_rank_threshold=float(native_rank_threshold_tensor),
+        native_compute_numerical_rank=native_compute_numerical_rank,
         maximum_rank=maximum_rank,
         singular_values=_as_float_tuple(singular_values),
         discarded_singular_value_energy=discarded_energy,

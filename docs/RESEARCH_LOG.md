@@ -7,6 +7,31 @@ scope downgrades are reported in place, loudly, naming the check that failed.
 
 ---
 
+## 2026-08-04 — F02b support64 and target artifacts: **implemented and locally verified, not executed**
+
+The independent dense support-space oracle now accepts a registered absolute rank cutoff.  Its
+default standalone rule is unchanged, while the F02b path must use the exact cutoff produced by the
+source-fp32 N0 SVD with strict `s > cutoff`.  The oracle still performs its own SVD and dense
+Cholesky in CPU float64, records both operational and native-fp64 cutoff/rank, and does not import
+ORBIT.  The registered adapter accepts only the exact-promoted fp64 arm and geometry-selected strata,
+reuses the pinned fp32 neighbour rows, revalidates the arm/geometry/strata after the dense solve, and
+persists both ambient and q-coordinate support projectors.  On the synthetic registered fixture,
+support64 agrees with the independently tightened `1e-12` ORBIT64 solve within the predeclared test
+tolerance; this is a correctness control, not predictive evidence.
+
+Completed ORBIT targets, optionally paired with matching support64 evidence, can now be copied
+immediately into canonical JSON bytes and bound by raw SHA-256.  The artifact includes represented
+operator inputs, fresh/replayed residual evidence, certificates, rank and Cholesky diagnostics,
+support64 spectra and projectors, and exact source/strata hashes.  Later mutation of execution
+tensors or dictionaries cannot alter the immutable bytes.  Noncanonical JSON, duplicate keys,
+nonfinite tensors/NaNs, mismatched support identities, and inconsistent saved residuals are rejected.
+The focused oracle/execution/artifact suite passes 60 tests on a shared, thread-limited 8-CPU local
+environment, and the full local suite passes (`713 passed, 1 skipped`).  No corpus, labels, GPU, or
+Slurm job were accessed; full-q/stress execution, strict 122-slot intake, threshold discovery, and
+an authorized runner remain pending.
+
+---
+
 ## 2026-08-04 — F02b resource policy v2: **shared 8-CPU only, locally verified, not submitted**
 
 The earlier unexecuted F02b v1 exclusive-L40S deployment is superseded.  The active calibration ID
