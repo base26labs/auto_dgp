@@ -9,8 +9,8 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from experiments.paper_nbody_benchmark import TASKS, _sha256
 
+from experiments.paper_nbody_benchmark import TASKS, _sha256
 from experiments.paper_nbody_prism_confirm import (
     CANDIDATE_NAME,
     DATASET_GENERATION_SEED,

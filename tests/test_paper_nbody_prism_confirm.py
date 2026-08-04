@@ -3,7 +3,6 @@
 from pathlib import Path
 
 from experiments.paper_nbody_benchmark import TASKS
-
 from experiments.paper_nbody_prism_aggregate import aggregate_results
 from experiments.paper_nbody_prism_confirm import (
     CANDIDATE_NAME,

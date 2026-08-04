@@ -17,6 +17,7 @@ from typing import Any
 
 import numpy as np
 import torch
+
 from experiments.f02_internal_models import (
     ScalarPrediction,
     fit_released_tera,
@@ -52,7 +53,6 @@ from experiments.paper_nbody_precision_rank_dev import (
     TRUST_RADIUS_SIGMA,
     _resource_summary,
 )
-
 from gp.orbit.budgeted import predict_budgeted_guarded_marginals
 
 SCHEMA = "paper_nbody_prism_confirmation_task_v1"
