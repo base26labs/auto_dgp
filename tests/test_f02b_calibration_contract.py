@@ -19,7 +19,6 @@ from experiments.f02b_calibration_contract import (
     FIT_TASK_COUNT,
     FIT_TASK_MATRIX_SHA256,
     MATRIX_HASHES,
-    MINIMUM_GPU_MEMORY_BYTES,
     MINIMUM_HOST_MEMORY_BYTES,
     NUMERICAL_POLICY,
     PROBE_TASK_COUNT,
@@ -45,19 +44,15 @@ from experiments.f02b_calibration_contract import (
 )
 
 
-def _runtime_allocation(
-    partition: str = "short",
-    *,
-    visible_gpu_count: int = 1,
-) -> dict[str, object]:
+def _runtime_allocation(partition: str = "short") -> dict[str, object]:
     return {
-        "exclusive_node": True,
-        "requested_gpu_count": 1,
-        "visible_gpu_count": visible_gpu_count,
-        "visible_gpu_models": ["NVIDIA L40S"] * visible_gpu_count,
-        "visible_gpu_memory_bytes": [MINIMUM_GPU_MEMORY_BYTES] * visible_gpu_count,
-        "requested_cpus_per_task": 16,
-        "available_cpu_count": 16,
+        "exclusive_node": False,
+        "requested_gpu_count": 0,
+        "visible_gpu_count": 0,
+        "visible_gpu_models": [],
+        "visible_gpu_memory_bytes": [],
+        "requested_cpus_per_task": 8,
+        "available_cpu_count": 8,
         "available_host_memory_bytes": MINIMUM_HOST_MEMORY_BYTES,
         "requested_walltime_seconds": WALLTIME_SECONDS,
         "walltime_limit_seconds": WALLTIME_SECONDS,
@@ -91,7 +86,7 @@ def _fit_envelope(task_index: int = 0) -> dict[str, object]:
 def _probe_envelope(task_index: int = 0) -> dict[str, object]:
     return build_probe_execution_envelope(
         task_index,
-        runtime_allocation=_runtime_allocation("interactivegpu"),
+        runtime_allocation=_runtime_allocation(),
         payload_binding=_payload_binding("probe", task_index),
     )
 
@@ -130,29 +125,29 @@ def test_frozen_resource_recipe_numeric_and_catalog_contracts_are_exact() -> Non
         "min_sigma_f": 1e-6,
         "min_sigma_g": 0.0,
         "dtype": "float32",
-        "device": "cuda",
+        "device": "cpu",
     }
     assert FIT_RECIPE == expected_recipe
     assert canonical_sha256(FIT_RECIPE) == FIT_RECIPE_SHA256
-    assert FIT_RECIPE_SHA256 == "3aaf4ba3172c5fa9a8878d321570385efb31d6050330268ebbf1399ec9fad421"
+    assert FIT_RECIPE_SHA256 == "cc4a891ab0f4ee3e0595291aadae961c445c23d1cd537ac8b85cb3888b0f44bb"
     assert not (set(FIT_RECIPE) & EXCLUDED_FIT_RECIPE_FIELDS)
     assert "seed" not in FIT_RECIPE
     assert "candidate_m" not in FIT_RECIPE
     assert not any("cg" in field or "prediction" in field for field in FIT_RECIPE)
 
     assert RESOURCE_CONTRACT == {
-        "exclusive_node": True,
-        "requested_gpu_count": 1,
-        "required_gpu_model": "NVIDIA L40S",
-        "minimum_gpu_memory_bytes": 48_000_000_000,
-        "requested_cpus_per_task": 16,
+        "exclusive_node": False,
+        "requested_gpu_count": 0,
+        "required_gpu_model": None,
+        "minimum_gpu_memory_bytes": 0,
+        "requested_cpus_per_task": 8,
         "minimum_host_memory_bytes": 68_719_476_736,
         "requested_walltime_seconds": 28_800,
         "array_concurrency": 1,
-        "allowed_partitions": ("short", "interactivegpu"),
+        "allowed_partitions": ("short",),
     }
     assert NUMERICAL_POLICY["source_dtype"] == "float32"
-    assert NUMERICAL_POLICY["source_device"] == "cuda"
+    assert NUMERICAL_POLICY["source_device"] == "cpu"
     assert NUMERICAL_POLICY["canonical_comparison_dtype"] == "float64"
     assert NUMERICAL_POLICY["canonical_comparison_device"] == "cpu"
     assert NUMERICAL_POLICY["physical_compute_dtype"] == "float64"
@@ -217,7 +212,7 @@ def test_all_122_probe_envelopes_bind_exact_probe_roles_and_fit_recipe() -> None
         second = build_execution_envelope(
             "probe",
             task.task_index,
-            runtime_allocation=_runtime_allocation("interactivegpu"),
+            runtime_allocation=_runtime_allocation(),
             payload_binding=_payload_binding("probe", task.task_index),
         )
         assert first == second
@@ -355,17 +350,17 @@ def test_payload_binding_rejects_unknown_missing_bool_index_and_role_mismatch() 
 @pytest.mark.parametrize(
     ("field", "value"),
     [
-        ("exclusive_node", False),
+        ("exclusive_node", True),
         ("requested_gpu_count", True),
-        ("requested_gpu_count", 2),
-        ("visible_gpu_count", 0),
+        ("requested_gpu_count", 1),
+        ("visible_gpu_count", 1),
         ("visible_gpu_count", True),
         ("visible_gpu_models", ["NVIDIA H100"]),
-        ("visible_gpu_memory_bytes", [47_999_999_999]),
+        ("visible_gpu_memory_bytes", [1]),
         ("visible_gpu_memory_bytes", [float("nan")]),
-        ("requested_cpus_per_task", 15),
+        ("requested_cpus_per_task", 7),
         ("requested_cpus_per_task", True),
-        ("available_cpu_count", 15),
+        ("available_cpu_count", 7),
         ("available_cpu_count", True),
         ("available_host_memory_bytes", 64_000_000_000),
         ("requested_walltime_seconds", 28_799),
@@ -385,17 +380,17 @@ def test_runtime_allocation_fails_closed_on_resource_mismatch(
         validate_runtime_allocation(allocation)
 
 
-def test_runtime_allocation_rejects_unknown_missing_and_accepts_both_partitions() -> None:
+def test_runtime_allocation_rejects_unknown_missing_gpu_and_unregistered_partition() -> None:
     assert validate_runtime_allocation(_runtime_allocation("short"))["partition"] == "short"
-    assert (
-        validate_runtime_allocation(_runtime_allocation("interactivegpu"))["partition"]
-        == "interactivegpu"
-    )
-    four_gpu = _runtime_allocation(visible_gpu_count=4)
-    four_gpu["available_cpu_count"] = 64
-    assert validate_runtime_allocation(four_gpu) == four_gpu
+    with pytest.raises(CalibrationContractError):
+        validate_runtime_allocation(_runtime_allocation("interactivegpu"))
+    visible_gpu = _runtime_allocation()
+    visible_gpu["visible_gpu_count"] = 1
+    visible_gpu["visible_gpu_models"] = ["NVIDIA L40S"]
+    visible_gpu["visible_gpu_memory_bytes"] = [48_000_000_000]
+    with pytest.raises(CalibrationContractError):
+        validate_runtime_allocation(visible_gpu)
     larger = _runtime_allocation()
-    larger["visible_gpu_memory_bytes"] = [MINIMUM_GPU_MEMORY_BYTES + 1]
     larger["available_cpu_count"] = 32
     larger["available_host_memory_bytes"] = MINIMUM_HOST_MEMORY_BYTES + 1
     assert validate_runtime_allocation(larger) == larger
@@ -447,7 +442,7 @@ def test_envelope_rejects_unknown_missing_and_outer_hash_tampering() -> None:
 @pytest.mark.parametrize(
     ("field", "value"),
     [
-        ("schema_version", "f02b_calibration_execution_envelope_v2"),
+        ("schema_version", "f02b_calibration_execution_envelope_v1"),
         ("calibration_id", "F02B_OTHER"),
         ("task_index", False),
         ("task_role", "probe"),

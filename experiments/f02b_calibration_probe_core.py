@@ -54,7 +54,7 @@ FP64_ONLY_TOLERANCE_SWEEP = (1e-9, 1e-10, 1e-11, 1e-12)
 SOLVER_MAX_ITERATIONS_CAP = 4096
 
 PROBE_WORK_PLAN_HASH_DOMAIN = "auto_dgp2.f02b.probe_work_plan"
-PROBE_WORK_PLAN_SCHEMA_VERSION = "f02b_calibration_probe_work_plan_v1"
+PROBE_WORK_PLAN_SCHEMA_VERSION = "f02b_calibration_probe_work_plan_v2"
 
 
 class ProbeCoreInputError(ValueError):
@@ -518,7 +518,7 @@ def _sha256(value: Any) -> str:
 
 
 # Frozen after building the complete domain-separated probe-core plan.
-PROBE_WORK_PLAN_SHA256 = "c815d848c8866ed085522d56f9db7aedef304a6d3c6e4ef3c24ee0be7f25498e"
+PROBE_WORK_PLAN_SHA256 = "7cfefba00c1f25d801dc7877111b35899528971b1315cf13ed8a0a2c5e6a5813"
 
 
 def _validate_work_plan_matrix() -> None:

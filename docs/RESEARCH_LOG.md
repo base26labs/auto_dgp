@@ -7,6 +7,27 @@ scope downgrades are reported in place, loudly, naming the check that failed.
 
 ---
 
+## 2026-08-04 — F02b resource policy v2: **shared 8-CPU only, locally verified, not submitted**
+
+The earlier unexecuted F02b v1 exclusive-L40S deployment is superseded.  The active calibration ID
+is now `F02B_NUMERICAL_CALIBRATION_v2`: fit and probe work must use one shared `short`-partition task
+with exactly eight requested CPUs, 64 GiB host memory, an eight-hour limit, array concurrency one,
+and zero requested or visible GPUs.  Both the launcher and Python runner independently require
+`OverSubscribe=OK`, reject any GPU TRES or exclusive allocation, and bind the observed policy into
+the execution envelope.  CPU math-library thread controls are fixed at eight.  Shared-node runtime
+remains diagnostic only and cannot support performance or cost claims.
+
+Changing the fit device from CUDA to CPU is a registered numerical-coordinate change, not a
+scheduler-only edit.  The v2 fit, probe, and combined task hashes are respectively
+`7272f823...5a39`, `98a44d16...4eca`, and `0ead06b0...1f4`; the CPU fit-recipe hash is
+`cc4a891a...44bb`, and the probe work-plan hash is `7cfefba0...5813`.  Execution-envelope, fit
+payload, fit-catalog, probe-work-plan, and probe-launch-manifest schemas were all advanced to v2, so
+no v1 fit artifact can enter the new cohort.  The focused resource/fit/probe contract suite passes
+284 tests, and the full shared 8-CPU local suite passes (`703 passed, 1 skipped`).  No Slurm job was
+submitted or cancelled during this migration.
+
+---
+
 ## 2026-08-04 — F02b ORBIT probe execution: **implemented and locally verified, not executed**
 
 The pure numerical probe executor now has a two-phase, label-free geometry path.  A source-fp32

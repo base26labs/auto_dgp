@@ -27,7 +27,6 @@ from experiments.f02b_calibration_contract import (
     FIT_RECIPE_SHA256,
     FIT_TASK_MATRIX_SHA256,
     MATRIX_HASHES,
-    MINIMUM_GPU_MEMORY_BYTES,
     MINIMUM_HOST_MEMORY_BYTES,
     NUMERICAL_POLICY,
     WALLTIME_SECONDS,
@@ -35,8 +34,8 @@ from experiments.f02b_calibration_contract import (
     canonical_sha256,
 )
 from experiments.f02b_calibration_fit import (
-    EXCLUSIVE_VERIFICATION_MODE,
     FIT_PAYLOAD_SCHEMA_VERSION,
+    SHARING_VERIFICATION_MODE,
     CalibrationFitError,
     FitInputs,
     build_fit_artifacts,
@@ -64,14 +63,14 @@ def _parameters() -> dict[str, object]:
     }
 
 
-def _runtime_allocation(visible_gpu_count: int = 2) -> dict[str, object]:
+def _runtime_allocation() -> dict[str, object]:
     return {
-        "exclusive_node": True,
-        "requested_gpu_count": 1,
-        "visible_gpu_count": visible_gpu_count,
-        "visible_gpu_models": ["NVIDIA L40S"] * visible_gpu_count,
-        "visible_gpu_memory_bytes": [MINIMUM_GPU_MEMORY_BYTES] * visible_gpu_count,
-        "requested_cpus_per_task": 16,
+        "exclusive_node": False,
+        "requested_gpu_count": 0,
+        "visible_gpu_count": 0,
+        "visible_gpu_models": [],
+        "visible_gpu_memory_bytes": [],
+        "requested_cpus_per_task": 8,
         "available_cpu_count": 32,
         "available_host_memory_bytes": MINIMUM_HOST_MEMORY_BYTES,
         "requested_walltime_seconds": WALLTIME_SECONDS,
@@ -153,8 +152,8 @@ def _identity(
             "job_id": "41001",
             "array_job_id": "41000",
             "array_task_id": task.task_index,
-            "node_list": "gpu-l40s-01",
-            "exclusive_verification_mode": EXCLUSIVE_VERIFICATION_MODE,
+            "node_list": "cpu-shared-01",
+            "sharing_verification_mode": SHARING_VERIFICATION_MODE,
         },
     }
 
@@ -249,8 +248,8 @@ def test_common_envelope_binds_canonical_payload_and_all_public_identities(
     assert record["fit_recipe"] == dict(FIT_RECIPE)
     assert record["fit_recipe_sha256"] == FIT_RECIPE_SHA256
     assert record["numerical_policy"] == dict(NUMERICAL_POLICY)
-    assert record["runtime_allocation"]["requested_gpu_count"] == 1
-    assert record["runtime_allocation"]["visible_gpu_count"] == 2
+    assert record["runtime_allocation"]["requested_gpu_count"] == 0
+    assert record["runtime_allocation"]["visible_gpu_count"] == 0
     binding = record["payload_binding"]
     expected = fit_artifact_paths(tmp_path / "output", 0)
     assert binding["numeric_payload_path"] == (
@@ -712,7 +711,7 @@ def test_payload_validator_fails_closed_on_schema_and_identity_drift(
     elif mutation == "confirmatory_phase":
         payload["input_identity"]["bundle"]["phase"] = "confirmatory"
     elif mutation == "scheduler_mode":
-        payload["provenance"]["scheduler"]["exclusive_verification_mode"] = "asserted"
+        payload["provenance"]["scheduler"]["sharing_verification_mode"] = "asserted"
     elif mutation == "scheduler_job_id":
         payload["provenance"]["scheduler"]["job_id"] = "job-41001"
     elif mutation == "dirty_source":
@@ -826,9 +825,9 @@ def test_invalid_or_confirmatory_task_indices_are_not_resolvable(tmp_path: Path)
 def _live_scontrol_record(task_index: int = 0) -> str:
     return (
         f"JobId=41001 ArrayJobId=41000 ArrayTaskId={task_index} "
-        "ArrayTaskThrottle=1 Partition=short NumNodes=1 NumCPUs=16 CPUs/Task=16 "
-        "TresPerNode=gres/gpu:l40s:1 MinMemoryNode=64G TimeLimit=08:00:00 "
-        "OverSubscribe=EXCLUSIVE NodeList=gpu-l40s-01\n"
+        "ArrayTaskThrottle=1 Partition=short NumNodes=1 NumCPUs=8 CPUs/Task=8 "
+        "MinMemoryNode=64G TimeLimit=08:00:00 "
+        "OverSubscribe=OK NodeList=cpu-shared-01\n"
     )
 
 
@@ -837,9 +836,8 @@ def _mock_live_runtime_evidence(
     *,
     record: str | None = None,
     available_cpu_count: int = 32,
-    cuda_available: bool = True,
-    models: tuple[str, ...] = ("NVIDIA L40S", "NVIDIA L40S"),
-    memory_bytes: tuple[int, ...] = (48_000_000_000, 48_000_000_000),
+    cuda_available: bool = False,
+    visible_gpu_count: int = 0,
 ) -> list[list[str]]:
     environment = {
         "SLURM_JOB_ID": "41001",
@@ -849,7 +847,7 @@ def _mock_live_runtime_evidence(
         "SLURM_ARRAY_TASK_MIN": "0",
         "SLURM_ARRAY_TASK_MAX": "44",
         "SLURM_ARRAY_TASK_STEP": "1",
-        "SLURM_JOB_NODELIST": "gpu-l40s-01",
+        "SLURM_JOB_NODELIST": "cpu-shared-01",
         "SLURM_JOB_PARTITION": "short",
         # These former evidence variables are deliberate lies.  The production
         # observer must neither read nor turn them into provenance.
@@ -879,12 +877,6 @@ def _mock_live_runtime_evidence(
         }
         return SimpleNamespace(stdout=record or _live_scontrol_record())
 
-    if len(models) != len(memory_bytes):
-        raise AssertionError("mock CUDA properties must have matching lengths")
-    properties = [
-        SimpleNamespace(name=name, total_memory=memory)
-        for name, memory in zip(models, memory_bytes, strict=True)
-    ]
     monkeypatch.setattr(fit_module.subprocess, "run", fake_run)
     monkeypatch.setattr(
         fit_module.os,
@@ -892,12 +884,7 @@ def _mock_live_runtime_evidence(
         lambda _pid: set(range(available_cpu_count)),
     )
     monkeypatch.setattr(fit_module.torch.cuda, "is_available", lambda: cuda_available)
-    monkeypatch.setattr(fit_module.torch.cuda, "device_count", lambda: len(properties))
-    monkeypatch.setattr(
-        fit_module.torch.cuda,
-        "get_device_properties",
-        lambda index: properties[index],
-    )
+    monkeypatch.setattr(fit_module.torch.cuda, "device_count", lambda: visible_gpu_count)
     return calls
 
 
@@ -909,7 +896,7 @@ def test_runtime_evidence_comes_from_live_scontrol_and_process_hardware(
     allocation, scheduler = fit_module._observe_runtime_evidence(fit_task_for_index(0))
 
     assert calls == [["scontrol", "show", "job", "41001", "-o"]]
-    assert allocation == _runtime_allocation(visible_gpu_count=2)
+    assert allocation == _runtime_allocation()
     assert scheduler == _identity(tmp_path)["scheduler"]
 
     identity = _identity(tmp_path)
@@ -923,7 +910,7 @@ def test_runtime_evidence_comes_from_live_scontrol_and_process_hardware(
     )
     assert payload["provenance"]["scheduler"] == scheduler
     assert envelope["canonical_record"]["runtime_allocation"] == allocation
-    assert scheduler["exclusive_verification_mode"] == EXCLUSIVE_VERIFICATION_MODE
+    assert scheduler["sharing_verification_mode"] == SHARING_VERIFICATION_MODE
 
 
 @pytest.mark.parametrize(
@@ -933,14 +920,14 @@ def test_runtime_evidence_comes_from_live_scontrol_and_process_hardware(
         ("ArrayJobId=41000", "ArrayJobId=99999"),
         ("ArrayTaskId=0", "ArrayTaskId=1"),
         ("ArrayTaskThrottle=1", "ArrayTaskThrottle=2"),
-        ("OverSubscribe=EXCLUSIVE", "OverSubscribe=OK"),
+        ("OverSubscribe=OK", "OverSubscribe=EXCLUSIVE"),
         ("TimeLimit=08:00:00", "TimeLimit=04:00:00"),
-        ("CPUs/Task=16", "CPUs/Task=8"),
+        ("CPUs/Task=8", "CPUs/Task=16"),
         ("MinMemoryNode=64G", "MinMemoryNode=32G"),
-        ("TresPerNode=gres/gpu:l40s:1", "TresPerNode=gres/gpu:l40s:2"),
+        ("MinMemoryNode=64G", "TresPerNode=gres/gpu:l40s:1 MinMemoryNode=64G"),
         ("NumNodes=1", "NumNodes=2"),
         ("Partition=short", "Partition=gpu"),
-        ("NodeList=gpu-l40s-01", "NodeList=gpu-l40s-02"),
+        ("NodeList=cpu-shared-01", "NodeList=cpu-shared-02"),
     ],
 )
 def test_runtime_evidence_rejects_live_scontrol_drift(
@@ -957,10 +944,10 @@ def test_runtime_evidence_rejects_live_scontrol_drift(
 @pytest.mark.parametrize(
     ("kwargs", "error"),
     [
-        ({"available_cpu_count": 8}, "observed runtime allocation"),
-        ({"cuda_available": False}, "CUDA is unavailable"),
-        ({"models": ("NVIDIA H100",), "memory_bytes": (80_000_000_000,)}, "allocation"),
-        ({"models": ("NVIDIA L40S",), "memory_bytes": (47_999_999_999,)}, "allocation"),
+        ({"available_cpu_count": 7}, "observed runtime allocation"),
+        ({"cuda_available": True}, "zero CUDA devices"),
+        ({"visible_gpu_count": 1}, "zero CUDA devices"),
+        ({"cuda_available": 1}, "invalid values"),
     ],
 )
 def test_runtime_evidence_rejects_insufficient_process_hardware(

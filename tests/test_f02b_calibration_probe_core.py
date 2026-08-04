@@ -230,7 +230,7 @@ def test_all_122_work_plans_are_canonical_and_bound_by_literal_hash() -> None:
     assert len(records) == len(PROBE_TASKS) == 122
     assert [record["task_index"] for record in records] == list(range(122))
     assert PROBE_WORK_PLAN_SHA256 == (
-        "c815d848c8866ed085522d56f9db7aedef304a6d3c6e4ef3c24ee0be7f25498e"
+        "7cfefba00c1f25d801dc7877111b35899528971b1315cf13ed8a0a2c5e6a5813"
     )
     assert payload["hash_domain"] == PROBE_WORK_PLAN_HASH_DOMAIN
     assert payload["schema_version"] == PROBE_WORK_PLAN_SCHEMA_VERSION

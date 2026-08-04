@@ -48,7 +48,7 @@ from experiments.f02b_calibration_fit import (
     validate_fit_numeric_payload,
 )
 
-FIT_CATALOG_SCHEMA_VERSION = "f02b_calibration_fit_catalog_v1"
+FIT_CATALOG_SCHEMA_VERSION = "f02b_calibration_fit_catalog_v2"
 FIT_CATALOG_TYPE = "f02b_development_fit_stage_catalog"
 
 _HEX40_LENGTH = 40
@@ -125,9 +125,9 @@ _RUNTIME_KEYS = {"packages", "platform", "python_executable", "python_version"}
 _SCHEDULER_KEYS = {
     "array_job_id",
     "array_task_id",
-    "exclusive_verification_mode",
     "job_id",
     "node_list",
+    "sharing_verification_mode",
 }
 _EXPECTED_DEPLOYMENT_KEYS = {
     "catalog_generation_commit",

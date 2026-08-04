@@ -72,9 +72,9 @@ set -Eeuo pipefail
 if [[ ${1:-} == */cluster/f02b_calibration_grid.py ]]; then
     printf '%s\n' "${5}"
     printf '%s\n' 1 2 3 12 47 20 20 rbf nbody_fixedmass_n2_d3_replica1
-    printf '%s\n' F02B_NUMERICAL_CALIBRATION_v1
+    printf '%s\n' F02B_NUMERICAL_CALIBRATION_v2
 elif [[ ${1:-} == -c ]]; then
-    printf '%s\n' 32 1 '["NVIDIA L40S"]' '[48318382080]'
+    printf '%s\n' 32
 elif [[ ${1:-} == -m ]]; then
     printf '%s\n' "$@" > "${FAKE_CAPTURE_ROOT}/runner-args.txt"
     env | sort > "${FAKE_CAPTURE_ROOT}/runner-env.txt"
@@ -145,9 +145,8 @@ printf '%s\n' "${FAKE_SCONTROL_RECORD}"
             "FAKE_CHECKED_OUT_GITLINK": "c" * 40,
             "FAKE_SCONTROL_RECORD": (
                 "JobId=9001 ArrayJobId=9000 ArrayTaskId=17 ArrayTaskThrottle=1 "
-                "Partition=short NumNodes=1 NumCPUs=16 CPUs/Task=16 "
-                "TresPerNode=gres/gpu:l40s:1 MinMemoryNode=64G "
-                "TimeLimit=08:00:00 OverSubscribe=EXCLUSIVE"
+                "Partition=short NumNodes=1 NumCPUs=8 CPUs/Task=8 "
+                "MinMemoryNode=64G TimeLimit=08:00:00 OverSubscribe=OK"
             ),
             "F02B_REPO_ROOT": str(deployed_repo),
             "F02B_DATA_ROOT": str(data_root),
@@ -162,10 +161,10 @@ printf '%s\n' "${FAKE_SCONTROL_RECORD}"
             "SLURM_ARRAY_TASK_MIN": "0",
             "SLURM_ARRAY_TASK_MAX": "44",
             "SLURM_ARRAY_TASK_STEP": "1",
-            "SLURM_JOB_NODELIST": "gpu001",
+            "SLURM_JOB_NODELIST": "cpu001",
             "SLURM_JOB_NUM_NODES": "1",
             "SLURM_NTASKS": "1",
-            "SLURM_CPUS_PER_TASK": "16",
+            "SLURM_CPUS_PER_TASK": "8",
             "SLURM_MEM_PER_NODE": "65536",
             "SLURM_JOB_PARTITION": "short",
         }
@@ -184,10 +183,8 @@ def test_sbatch_directives_bind_the_exact_fit_array_resources() -> None:
         "#SBATCH --partition=short",
         "#SBATCH --nodes=1",
         "#SBATCH --ntasks=1",
-        "#SBATCH --cpus-per-task=16",
+        "#SBATCH --cpus-per-task=8",
         "#SBATCH --mem=64G",
-        "#SBATCH --gres=gpu:l40s:1",
-        "#SBATCH --exclusive",
         "#SBATCH --time=08:00:00",
         "#SBATCH --array=0-44%1",
         "#SBATCH --output=runs/f02b-fit-%A_%a.out",
@@ -203,6 +200,8 @@ def test_launcher_has_no_task_fallback_python_override_or_science_argument_surfa
     assert "PYTHON_BIN=${REPO_ROOT}/.venv/bin/python" in source
     assert "F02B_PYTHON" not in source
     assert "eval " not in source
+    assert "#SBATCH --exclusive" not in source
+    assert "#SBATCH --gres" not in source
     for obsolete_evidence in (
         "F02B_EXCLUSIVE_VERIFIED",
         "F02B_EXCLUSIVE_MODE",
@@ -253,8 +252,13 @@ def test_fake_allocation_preflights_but_does_not_export_attested_evidence(
     assert runner_environment["SLURM_JOB_ID"] == "9001"
     assert runner_environment["SLURM_ARRAY_JOB_ID"] == "9000"
     assert runner_environment["SLURM_ARRAY_TASK_ID"] == "17"
-    assert runner_environment["SLURM_CPUS_PER_TASK"] == "16"
+    assert runner_environment["SLURM_CPUS_PER_TASK"] == "8"
     assert runner_environment["SLURM_JOB_PARTITION"] == "short"
+    assert runner_environment["OMP_NUM_THREADS"] == "8"
+    assert runner_environment["MKL_NUM_THREADS"] == "8"
+    assert runner_environment["OPENBLAS_NUM_THREADS"] == "8"
+    assert runner_environment["NUMEXPR_NUM_THREADS"] == "8"
+    assert runner_environment["CUDA_VISIBLE_DEVICES"] == ""
     for forbidden in (
         "F02B_EXCLUSIVE_VERIFIED",
         "F02B_EXCLUSIVE_MODE",
@@ -271,7 +275,7 @@ def test_fake_allocation_preflights_but_does_not_export_attested_evidence(
         assert forbidden not in runner_environment
 
 
-def test_interactivegpu_is_the_only_alternate_partition(fake_cluster: FakeCluster) -> None:
+def test_interactivegpu_partition_is_rejected_before_git(fake_cluster: FakeCluster) -> None:
     environment = dict(fake_cluster.environment)
     environment["SLURM_JOB_PARTITION"] = "interactivegpu"
     environment["FAKE_SCONTROL_RECORD"] = environment["FAKE_SCONTROL_RECORD"].replace(
@@ -280,11 +284,10 @@ def test_interactivegpu_is_the_only_alternate_partition(fake_cluster: FakeCluste
 
     result = fake_cluster.run(environment)
 
-    assert result.returncode == 0, result.stderr
-    assert (
-        "SLURM_JOB_PARTITION=interactivegpu"
-        in (fake_cluster.capture_root / "runner-env.txt").read_text().splitlines()
-    )
+    assert result.returncode == 2
+    assert "only the short partition" in result.stderr
+    assert not (fake_cluster.capture_root / "git-calls.txt").exists()
+    assert not (fake_cluster.capture_root / "runner-args.txt").exists()
 
 
 def test_unregistered_partition_is_rejected_before_git(fake_cluster: FakeCluster) -> None:
@@ -294,7 +297,7 @@ def test_unregistered_partition_is_rejected_before_git(fake_cluster: FakeCluster
     result = fake_cluster.run(environment)
 
     assert result.returncode == 2
-    assert "only the short or interactivegpu partition" in result.stderr
+    assert "only the short partition" in result.stderr
     assert not (fake_cluster.capture_root / "git-calls.txt").exists()
     assert not (fake_cluster.capture_root / "runner-args.txt").exists()
 
@@ -303,18 +306,18 @@ def test_unregistered_partition_is_rejected_before_git(fake_cluster: FakeCluster
     ("old", "new", "error"),
     [
         (
-            "OverSubscribe=EXCLUSIVE",
             "OverSubscribe=OK",
-            "scontrol-confirmed exclusive allocation",
+            "OverSubscribe=EXCLUSIVE",
+            "scontrol-confirmed shared allocation",
         ),
         ("ArrayTaskThrottle=1", "ArrayTaskThrottle=2", "array concurrency of one"),
         ("TimeLimit=08:00:00", "TimeLimit=04:00:00", "eight-hour job time limit"),
-        ("CPUs/Task=16", "CPUs/Task=8", "16-CPU task request"),
+        ("CPUs/Task=8", "CPUs/Task=16", "8-CPU task request"),
         ("MinMemoryNode=64G", "MinMemoryNode=32G", "64-GiB node-memory request"),
         (
-            "TresPerNode=gres/gpu:l40s:1",
-            "TresPerNode=gres/gpu:l40s:2",
-            "one-L40S request",
+            "MinMemoryNode=64G",
+            "TresPerNode=gres/gpu:l40s:1 MinMemoryNode=64G",
+            "requests any GPU",
         ),
     ],
 )

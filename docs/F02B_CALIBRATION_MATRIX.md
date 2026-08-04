@@ -1,6 +1,6 @@
 # F02b numerical calibration matrix
 
-Calibration ID: `F02B_NUMERICAL_CALIBRATION_v1`
+Calibration ID: `F02B_NUMERICAL_CALIBRATION_v2`
 
 Status: **PREDECLARED DEVELOPMENT-ONLY DESIGN — not an F02b protocol freeze, not a numerical-gate
 pass, and not authorization to read a confirmatory label.**
@@ -16,12 +16,12 @@ and Slurm recipes must all be committed, tested, and shown to reject incomplete 
 first array is launched.
 
 Implementation checkpoint: the public execution-envelope contract, training-only fit runner,
-strict 45-slot fit aggregator, exact exclusive-L40S fit launcher, and independent arbitrary-precision
+strict 45-slot fit aggregator, exact shared 8-CPU fit launcher, and independent arbitrary-precision
 RBF fixture are now present.  The label-free probe foundation is also present: it selects exactly the
 100 registered development-validation coordinate rows without touching `E` or `F`, freezes pinned
 vendor neighbours only in source fp32, and expands all 122 task records into the domain-separated
 probe-core work-plan hash
-`c815d848c8866ed085522d56f9db7aedef304a6d3c6e4ef3c24ee0be7f25498e`.  That hash also covers the
+`7cfefba00c1f25d801dc7877111b35899528971b1315cf13ed8a0a2c5e6a5813`.  That hash also covers the
 development replicas, exact evaluation design, neighbour/tie policy, rank rule, strata, stress
 registry, and four-arm full-q registry.  The neighbour boundary rejects short training populations,
 train/evaluation source overlap, nonfinite fp32 scaling or distances, and every selected or boundary
@@ -48,10 +48,11 @@ evidence, and can never set `freeze_ready=true`.  The fit runner itself validate
 process-visible hardware before any corpus read or training-tensor allocation, then uses one private
 byte-identical snapshot for bundle authorization and loading rather than reopening mutable input paths.  The
 arbitrary-precision fixture certifies posterior moments only for a caller-supplied support basis and
-coordinates; support construction, rank, and cutoff remain N0 obligations.  The audited ORBIT system
-exposure, N0/N1/N2 and full-q execution core, probe artifact writer, strict 122-slot intake,
-discovery/locked-holdout threshold workflow, and probe Slurm runner remain incomplete.  This checkpoint
-therefore still authorizes no Slurm submission and no confirmatory access.
+coordinates; support construction, rank, and cutoff remain N0 obligations.  The audited reusable
+ORBIT system and authenticated two-phase N0/ORBIT32/ORBIT64 execution path are present and locally
+tested.  The support64/full-q/stress adapters, immutable probe artifact writer, strict 122-slot
+intake, discovery/locked-holdout threshold workflow, and probe Slurm runner remain incomplete.  This
+checkpoint therefore still authorizes no Slurm submission and no confirmatory access.
 
 The earlier v3 artifact from job 2810629 motivated the strata and fault tests but is excluded from
 fitting numerical thresholds.  In particular, its observed errors may not be rounded upward and
@@ -89,8 +90,8 @@ training_m    = 20
 kernel        = RBF
 ```
 
-Every other fit option is the exact `InternalTaskConfig` default used by the v3 diagnostic:
-float32 released TERA training, batch size 256, learning rate 0.01, fixed graph, isotropic
+Every other fit option follows the registered v2 recipe: CPU float32 released TERA training, batch
+size 256, learning rate 0.01, fixed graph, isotropic
 lengthscale initialized at 1, learned outputscale/value-noise/gradient-noise/lengthscale, and no
 weight decay.  A fit artifact stores only strict JSON parameters and provenance; no pickle or
 executable model state is accepted.
@@ -105,7 +106,7 @@ Probe tasks reuse a fit artifact from a strict, complete 45-fit catalog:
 
 1. all 45 fits receive one `m=50`, `repeat_id=0` reference probe;
 2. the 15 seed-11 fits additionally receive `m={20,75,100,150,200}` resource-sweep probes; and
-3. the `(replica=0,D=12,seed=11,m=50)` probe is replayed with `repeat_id=1,2` in separate exclusive
+3. the `(replica=0,D=12,seed=11,m=50)` probe is replayed with `repeat_id=1,2` in distinct shared
    allocations.
 
 The seed-11 large-`m` sweep is a sparse numerical calibration, not proof that seed and neighbourhood
@@ -123,9 +124,9 @@ constants.  Negative indices, duplicate identities, a caller-supplied scientific
 matrix hash mismatch are structural failures.
 
 ```text
-fit matrix SHA-256     e53cabcb788e9383431b4a6b50bc6631499d9acf3f338ea659d654d76e24513e
-probe matrix SHA-256   b729e755300fb997a18c07bf0cff185a1e60a7ed884355f95127cdd2f36aae7c
-combined SHA-256       d81aee9b479adf437abd7f44782e4688227d3361458d686302c976bda5150114
+fit matrix SHA-256     7272f823a2bfc0f52cbfc2e27ae3a56b2f668e3ca2abff054de9209cd2fa5a39
+probe matrix SHA-256   98a44d167f6a34d3e94dcffd026d030e56bcf30f77a0bd43810f16b311e54eca
+combined SHA-256       0ead06b0e2f6de24c49f4bf6f999f90690ff1fb82be3585cc212bdd11fd411f4
 ```
 
 ## Development rows and label-independent strata
@@ -157,14 +158,15 @@ the even population of 100 targets, “median” below means the upper median at
 
 Missing strata, duplicate source identities, a changed target order, or an N0 failure remains in the
 artifact and makes the aggregate not freeze-ready.  A failed or expensive `m=200` probe may not be
-silently removed after execution.  Each fit and probe task receives one exclusive node, one requested
-L40S whose runtime reports at least `48,000,000,000` device-memory bytes (marketed 48 GB), 16 CPU
-cores, 64 GiB host memory, and an eight-hour wall-time limit.  Arrays run at maximum concurrency one;
-reproducibility replays use distinct allocations.  A task may use either the `short` or
-`interactivegpu` scheduling partition because partition is not a scientific coordinate, but it must
-record the partition and resolved GPU model.  OOM or timeout at the registered limit is a calibration
-failure.  Removing `m=200` requires a new pre-run design version that also removes it from future
-F02b selection.
+silently removed after execution.  Each fit and probe task uses one shared node, one task, exactly
+eight requested CPU cores, zero requested and zero visible GPUs, 64 GiB host memory, and an
+eight-hour wall-time limit on `short`.  The live Slurm record must report `OverSubscribe=OK`; any
+exclusive allocation or GPU TRES is a structural failure.  `OMP_NUM_THREADS`, `MKL_NUM_THREADS`,
+`OPENBLAS_NUM_THREADS`, and `NUMEXPR_NUM_THREADS` are fixed at eight.  Arrays run at maximum
+concurrency one, so the registered deployment requests at most eight CPUs at a time;
+reproducibility replays use distinct allocations.  OOM or timeout at the registered limit is a
+calibration failure.  Removing `m=200` requires a new pre-run design version that also removes it
+from future F02b selection.
 
 ## N0 geometry and physical constraints
 
@@ -373,14 +375,15 @@ accounted tasks and no unexpected directory.
 
 Each task binds the calibration ID and matrix hashes, task index and stable coordinates, corpus and
 catalog identities/hashes, exact evaluation source rows, fixed-neighbour source rows, fit artifact
-hash, clean commit/tree, TERA gitlink, dependency hashes, runtime packages, and exclusive Slurm
-allocation evidence.  Output paths are identity-derived and never overwritten.
+hash, clean commit/tree, TERA gitlink, dependency hashes, runtime packages, and shared CPU-only
+Slurm allocation evidence.  Output paths are identity-derived and never overwritten.
 
 The three hashes live in a non-recursive execution envelope outside the canonical task record being
 hashed.  The scaffold CLI record alone is not this envelope and cannot be submitted directly.
 
 Missing, duplicate, unexpected, malformed, nonfinite, clipped, OOM, timed-out, provenance-mismatched,
-or nonexclusive tasks make `analysis_ready=false`.  Numerical gate failures remain valid artifacts
+or exclusive/GPU-bearing/resource-mismatched tasks make `analysis_ready=false`.  Numerical gate
+failures remain valid artifacts
 with `scientific_status=failed`; they are not converted into structural absence.  Aggregation may
 propose thresholds but must always emit `freeze_ready=false` until a separately reviewed F02b
 protocol binds the report hashes and explicitly changes status.

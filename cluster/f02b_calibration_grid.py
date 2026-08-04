@@ -14,7 +14,7 @@ import json
 from dataclasses import asdict, dataclass
 from typing import Any
 
-CALIBRATION_ID = "F02B_NUMERICAL_CALIBRATION_v1"
+CALIBRATION_ID = "F02B_NUMERICAL_CALIBRATION_v2"
 DEVELOPMENT_REPLICAS = (0, 1, 2)
 PARTICLE_COUNTS = (2, 4, 6, 8, 10)
 SEEDS = (11, 29, 47)
@@ -246,9 +246,9 @@ def _sha256(value: Any) -> str:
 
 # These literals make accidental changes to task order or record semantics fail
 # at import, before a scheduler can resolve an array index.
-FIT_TASK_MATRIX_SHA256 = "e53cabcb788e9383431b4a6b50bc6631499d9acf3f338ea659d654d76e24513e"
-PROBE_TASK_MATRIX_SHA256 = "b729e755300fb997a18c07bf0cff185a1e60a7ed884355f95127cdd2f36aae7c"
-CALIBRATION_MATRIX_SHA256 = "d81aee9b479adf437abd7f44782e4688227d3361458d686302c976bda5150114"
+FIT_TASK_MATRIX_SHA256 = "7272f823a2bfc0f52cbfc2e27ae3a56b2f668e3ca2abff054de9209cd2fa5a39"
+PROBE_TASK_MATRIX_SHA256 = "98a44d167f6a34d3e94dcffd026d030e56bcf30f77a0bd43810f16b311e54eca"
+CALIBRATION_MATRIX_SHA256 = "0ead06b0e2f6de24c49f4bf6f999f90690ff1fb82be3585cc212bdd11fd411f4"
 
 
 def _validate_matrix() -> None:

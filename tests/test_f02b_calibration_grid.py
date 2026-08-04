@@ -67,7 +67,7 @@ def test_fit_matrix_is_the_exact_fixed_budget_cartesian_product() -> None:
     assert TRAIN_STEPS == 20
     assert TRAINING_M == 20
     assert KERNEL == "rbf"
-    assert CALIBRATION_ID == "F02B_NUMERICAL_CALIBRATION_v1"
+    assert CALIBRATION_ID == "F02B_NUMERICAL_CALIBRATION_v2"
     assert FIT_TASK_COUNT == 45 == len(expected)
     assert observed == expected
     assert (
@@ -214,13 +214,13 @@ def test_records_are_canonical_fresh_values_bound_by_literal_hashes() -> None:
     combined = {"fit_tasks": fit_records, "probe_tasks": probe_records}
 
     assert FIT_TASK_MATRIX_SHA256 == (
-        "e53cabcb788e9383431b4a6b50bc6631499d9acf3f338ea659d654d76e24513e"
+        "7272f823a2bfc0f52cbfc2e27ae3a56b2f668e3ca2abff054de9209cd2fa5a39"
     )
     assert PROBE_TASK_MATRIX_SHA256 == (
-        "b729e755300fb997a18c07bf0cff185a1e60a7ed884355f95127cdd2f36aae7c"
+        "98a44d167f6a34d3e94dcffd026d030e56bcf30f77a0bd43810f16b311e54eca"
     )
     assert CALIBRATION_MATRIX_SHA256 == (
-        "d81aee9b479adf437abd7f44782e4688227d3361458d686302c976bda5150114"
+        "0ead06b0e2f6de24c49f4bf6f999f90690ff1fb82be3585cc212bdd11fd411f4"
     )
     assert _canonical_sha256(fit_records) == FIT_TASK_MATRIX_SHA256
     assert _canonical_sha256(probe_records) == PROBE_TASK_MATRIX_SHA256
@@ -316,7 +316,7 @@ def test_cli_counts_json_and_shell_safe_lines() -> None:
         "20",
         "rbf",
         "nbody_fixedmass_n2_d3_replica0",
-        "F02B_NUMERICAL_CALIBRATION_v1",
+        "F02B_NUMERICAL_CALIBRATION_v2",
     ]
     assert probe_lines.stdout.splitlines() == [
         "0",
@@ -334,7 +334,7 @@ def test_cli_counts_json_and_shell_safe_lines() -> None:
         "3",
         "7",
         "1",
-        "F02B_NUMERICAL_CALIBRATION_v1",
+        "F02B_NUMERICAL_CALIBRATION_v2",
     ]
 
 

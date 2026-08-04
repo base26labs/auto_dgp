@@ -33,7 +33,7 @@ from experiments.f02b_calibration_fit_aggregate import (
 )
 from experiments.f02b_calibration_probe_core import canonical_probe_work_plan_payload
 
-PROBE_LAUNCH_MANIFEST_SCHEMA_VERSION = "f02b_calibration_probe_launch_manifest_v1"
+PROBE_LAUNCH_MANIFEST_SCHEMA_VERSION = "f02b_calibration_probe_launch_manifest_v2"
 PROBE_LAUNCH_MANIFEST_TYPE = "f02b_calibration_probe_launch"
 
 # These independent canonical byte literals are the authority used by builders
@@ -42,22 +42,21 @@ PROBE_LAUNCH_MANIFEST_TYPE = "f02b_calibration_probe_launch"
 # those subclasses' overridden mutators.  Each use parses a fresh plain-JSON
 # value from these immutable bytes.
 _MATRIX_HASHES_CANONICAL_BYTES = (
-    b'{"calibration_matrix_sha256":"d81aee9b479adf437abd7f44782e4688227d3361458d686302c976bda5150114",'
-    b'"fit_task_matrix_sha256":"e53cabcb788e9383431b4a6b50bc6631499d9acf3f338ea659d654d76e24513e",'
-    b'"probe_task_matrix_sha256":"b729e755300fb997a18c07bf0cff185a1e60a7ed884355f95127cdd2f36aae7c"}'
+    b'{"calibration_matrix_sha256":"0ead06b0e2f6de24c49f4bf6f999f90690ff1fb82be3585cc212bdd11fd411f4",'
+    b'"fit_task_matrix_sha256":"7272f823a2bfc0f52cbfc2e27ae3a56b2f668e3ca2abff054de9209cd2fa5a39",'
+    b'"probe_task_matrix_sha256":"98a44d167f6a34d3e94dcffd026d030e56bcf30f77a0bd43810f16b311e54eca"}'
 )
 _RESOURCE_CONTRACT_CANONICAL_BYTES = (
-    b'{"allowed_partitions":["short","interactivegpu"],"array_concurrency":1,'
-    b'"exclusive_node":true,"minimum_gpu_memory_bytes":48000000000,'
-    b'"minimum_host_memory_bytes":68719476736,"requested_cpus_per_task":16,'
-    b'"requested_gpu_count":1,"requested_walltime_seconds":28800,'
-    b'"required_gpu_model":"NVIDIA L40S"}'
+    b'{"allowed_partitions":["short"],"array_concurrency":1,"exclusive_node":false,'
+    b'"minimum_gpu_memory_bytes":0,"minimum_host_memory_bytes":68719476736,'
+    b'"requested_cpus_per_task":8,"requested_gpu_count":0,'
+    b'"requested_walltime_seconds":28800,"required_gpu_model":null}'
 )
 _NUMERICAL_POLICY_CANONICAL_BYTES = (
     b'{"canonical_comparison_device":"cpu","canonical_comparison_dtype":"float64",'
     b'"cuda_matmul_allow_tf32":false,"cudnn_allow_tf32":false,'
     b'"float32_matmul_precision":"highest","physical_compute_device":"cpu",'
-    b'"physical_compute_dtype":"float64","source_device":"cuda",'
+    b'"physical_compute_dtype":"float64","source_device":"cpu",'
     b'"source_dtype":"float32"}'
 )
 _SUBMISSION_IDENTITY_POLICY_CANONICAL_BYTES = (
@@ -76,7 +75,7 @@ _SUBMISSION_PLAN_CANONICAL_BYTES = (
 )
 
 _SCHEDULER_PLAN_SHA256_LITERAL = "561449486237f4ac7c681909ee98dea2eed81166ce4c7a1bcca6071540215b6f"
-_PROBE_WORK_PLAN_SHA256_LITERAL = "c815d848c8866ed085522d56f9db7aedef304a6d3c6e4ef3c24ee0be7f25498e"
+_PROBE_WORK_PLAN_SHA256_LITERAL = "7cfefba00c1f25d801dc7877111b35899528971b1315cf13ed8a0a2c5e6a5813"
 SCHEDULER_PLAN_SHA256 = _SCHEDULER_PLAN_SHA256_LITERAL
 
 _MANIFEST_PAYLOAD_FIELDS = (

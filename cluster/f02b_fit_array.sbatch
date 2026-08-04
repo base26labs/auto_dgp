@@ -4,10 +4,8 @@
 #SBATCH --partition=short
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=16
+#SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
-#SBATCH --gres=gpu:l40s:1
-#SBATCH --exclusive
 #SBATCH --time=08:00:00
 #SBATCH --array=0-44%1
 #SBATCH --output=runs/f02b-fit-%A_%a.out
@@ -15,6 +13,11 @@
 
 set -Eeuo pipefail
 umask 027
+export OMP_NUM_THREADS=8
+export MKL_NUM_THREADS=8
+export OPENBLAS_NUM_THREADS=8
+export NUMEXPR_NUM_THREADS=8
+export CUDA_VISIBLE_DEVICES=""
 
 readonly EXPECTED_CATALOG_SHA256=2dee429bdaf50cc78cb40ba8b038f7e4731bb07127927c55607b528c1db66942
 readonly EXPECTED_TASK_COUNT=45
@@ -118,21 +121,18 @@ if [[ ${SLURM_JOB_NUM_NODES} != 1 || ${SLURM_NTASKS} != 1 ]]; then
     echo "F02b fits require exactly one node and one task" >&2
     exit 2
 fi
-if [[ ${SLURM_CPUS_PER_TASK} != 16 ]]; then
-    echo "F02b fits require exactly 16 requested CPUs per task" >&2
+if [[ ${SLURM_CPUS_PER_TASK} != 8 ]]; then
+    echo "F02b fits require exactly 8 requested CPUs per task" >&2
     exit 2
 fi
 if [[ -n ${SLURM_MEM_PER_NODE:-} && ${SLURM_MEM_PER_NODE} != "${EXPECTED_MEMORY_MIB}" ]]; then
     echo "F02b fits require exactly 64 GiB of requested host memory" >&2
     exit 2
 fi
-case ${SLURM_JOB_PARTITION} in
-    short|interactivegpu) ;;
-    *)
-        echo "F02b fits permit only the short or interactivegpu partition" >&2
-        exit 2
-        ;;
-esac
+if [[ ${SLURM_JOB_PARTITION} != short ]]; then
+    echo "F02b fits permit only the short partition" >&2
+    exit 2
+fi
 
 # SLURM_ARRAY_TASK_ID is the sole source of runner task identity.
 TASK_INDEX=${SLURM_ARRAY_TASK_ID}
@@ -205,8 +205,8 @@ if [[ ! -f ${DATASET_PATH} ]]; then
 fi
 
 SLURM_JOB_RECORD=$(scontrol show job "${SLURM_JOB_ID}" -o)
-if [[ " ${SLURM_JOB_RECORD} " != *" OverSubscribe=EXCLUSIVE "* ]]; then
-    echo "refusing to run without scontrol-confirmed exclusive allocation" >&2
+if [[ " ${SLURM_JOB_RECORD} " != *" OverSubscribe=OK "* ]]; then
+    echo "refusing to run without scontrol-confirmed shared allocation" >&2
     exit 2
 fi
 if [[ " ${SLURM_JOB_RECORD} " != *" ArrayTaskThrottle=1 "* ]]; then
@@ -217,60 +217,46 @@ if [[ " ${SLURM_JOB_RECORD} " != *" TimeLimit=08:00:00 "* ]]; then
     echo "refusing to run without an exact eight-hour job time limit" >&2
     exit 2
 fi
-if [[ " ${SLURM_JOB_RECORD} " != *" CPUs/Task=16 "* ]]; then
-    echo "refusing to run without an exact 16-CPU task request" >&2
+if [[ " ${SLURM_JOB_RECORD} " != *" CPUs/Task=8 "* ]]; then
+    echo "refusing to run without an exact 8-CPU task request" >&2
     exit 2
 fi
 if [[ " ${SLURM_JOB_RECORD} " != *" MinMemoryNode=64G "* ]]; then
     echo "refusing to run without an exact 64-GiB node-memory request" >&2
     exit 2
 fi
-if [[ " ${SLURM_JOB_RECORD} " != *" TresPerNode=gres/gpu:l40s:1 "* ]]; then
-    echo "refusing to run without an exact one-L40S request" >&2
+if [[ " ${SLURM_JOB_RECORD} " == *"gres/gpu"* ]]; then
+    echo "refusing a fit allocation that requests any GPU" >&2
     exit 2
 fi
 
-# Query the Python process's actual CPU affinity and CUDA-visible devices with
+# Query the Python process's actual CPU affinity and CUDA visibility with
 # the same repository interpreter that will execute the fit runner.
 mapfile -t HARDWARE_FIELDS < <(
     "${PYTHON_BIN}" -c '
-import json
 import os
 
 import torch
 
 affinity_count = len(os.sched_getaffinity(0))
-if not torch.cuda.is_available():
-    raise SystemExit("CUDA is unavailable")
-devices = [torch.cuda.get_device_properties(index) for index in range(torch.cuda.device_count())]
-if affinity_count < 16:
-    raise SystemExit("fewer than 16 CPUs are available in process affinity")
-if not devices:
-    raise SystemExit("no CUDA devices are visible")
-if any(device.name != "NVIDIA L40S" for device in devices):
-    raise SystemExit("a visible CUDA device is not NVIDIA L40S")
-if any(device.total_memory < 48_000_000_000 for device in devices):
-    raise SystemExit("a visible CUDA device has less than 48e9 bytes")
+if affinity_count < 8:
+    raise SystemExit("fewer than 8 CPUs are available in process affinity")
+if torch.cuda.is_available() or torch.cuda.device_count() != 0:
+    raise SystemExit("CPU-only fit must expose zero CUDA devices")
 print(affinity_count)
-print(len(devices))
-print(json.dumps([device.name for device in devices], separators=(",", ":")))
-print(json.dumps([device.total_memory for device in devices], separators=(",", ":")))
 '
 )
-if (( ${#HARDWARE_FIELDS[@]} != 4 )); then
+if (( ${#HARDWARE_FIELDS[@]} != 1 )); then
     echo "could not obtain the exact F02b runtime allocation fields" >&2
     exit 2
 fi
 AVAILABLE_CPU_COUNT=${HARDWARE_FIELDS[0]}
-VISIBLE_GPU_COUNT=${HARDWARE_FIELDS[1]}
-VISIBLE_GPU_MODELS_JSON=${HARDWARE_FIELDS[2]}
-VISIBLE_GPU_MEMORY_BYTES_JSON=${HARDWARE_FIELDS[3]}
-if [[ ! ${AVAILABLE_CPU_COUNT} =~ ^[0-9]+$ || ! ${VISIBLE_GPU_COUNT} =~ ^[0-9]+$ ]]; then
-    echo "runtime CPU/GPU counts are not non-negative decimal integers" >&2
+if [[ ! ${AVAILABLE_CPU_COUNT} =~ ^[0-9]+$ ]]; then
+    echo "runtime CPU count is not a non-negative decimal integer" >&2
     exit 2
 fi
-if (( AVAILABLE_CPU_COUNT < 16 || VISIBLE_GPU_COUNT < 1 )); then
-    echo "runtime allocation exposes insufficient CPUs or GPUs" >&2
+if (( AVAILABLE_CPU_COUNT < 8 )); then
+    echo "runtime allocation exposes fewer than 8 CPUs" >&2
     exit 2
 fi
 

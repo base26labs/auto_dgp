@@ -29,10 +29,10 @@ from cluster.f02b_calibration_grid import (
     PROBE_TASKS,
 )
 
-EXECUTION_ENVELOPE_SCHEMA_VERSION = "f02b_calibration_execution_envelope_v1"
+EXECUTION_ENVELOPE_SCHEMA_VERSION = "f02b_calibration_execution_envelope_v2"
 TASK_ROLES = ("fit", "probe")
 
-MINIMUM_GPU_MEMORY_BYTES = 48_000_000_000
+MINIMUM_GPU_MEMORY_BYTES = 0
 MINIMUM_HOST_MEMORY_BYTES = 64 * 1024**3
 WALLTIME_SECONDS = 8 * 60 * 60
 F02_CATALOG_SHA256 = "2dee429bdaf50cc78cb40ba8b038f7e4731bb07127927c55607b528c1db66942"
@@ -88,10 +88,10 @@ FIT_RECIPE = _FrozenJSONDict(
         "min_sigma_f": 1e-6,
         "min_sigma_g": 0.0,
         "dtype": "float32",
-        "device": "cuda",
+        "device": "cpu",
     }
 )
-FIT_RECIPE_SHA256 = "3aaf4ba3172c5fa9a8878d321570385efb31d6050330268ebbf1399ec9fad421"
+FIT_RECIPE_SHA256 = "cc4a891ab0f4ee3e0595291aadae961c445c23d1cd537ac8b85cb3888b0f44bb"
 EXCLUDED_FIT_RECIPE_FIELDS = frozenset(
     {
         "seed",
@@ -108,22 +108,22 @@ EXCLUDED_FIT_RECIPE_FIELDS = frozenset(
 
 RESOURCE_CONTRACT = _FrozenJSONDict(
     {
-        "exclusive_node": True,
-        "requested_gpu_count": 1,
-        "required_gpu_model": "NVIDIA L40S",
+        "exclusive_node": False,
+        "requested_gpu_count": 0,
+        "required_gpu_model": None,
         "minimum_gpu_memory_bytes": MINIMUM_GPU_MEMORY_BYTES,
-        "requested_cpus_per_task": 16,
+        "requested_cpus_per_task": 8,
         "minimum_host_memory_bytes": MINIMUM_HOST_MEMORY_BYTES,
         "requested_walltime_seconds": WALLTIME_SECONDS,
         "array_concurrency": 1,
-        "allowed_partitions": ("short", "interactivegpu"),
+        "allowed_partitions": ("short",),
     }
 )
 
 NUMERICAL_POLICY = _FrozenJSONDict(
     {
         "source_dtype": "float32",
-        "source_device": "cuda",
+        "source_device": "cpu",
         "canonical_comparison_dtype": "float64",
         "canonical_comparison_device": "cpu",
         "physical_compute_dtype": "float64",
@@ -372,8 +372,8 @@ def validate_runtime_allocation(value: Any) -> dict[str, Any]:
     canonical_json_bytes(value)
     allocation = _require_mapping(value, "runtime_allocation")
     _require_exact_keys(allocation, _RUNTIME_ALLOCATION_KEYS, "runtime_allocation")
-    if allocation["exclusive_node"] is not True:
-        raise CalibrationContractError("runtime allocation must verify an exclusive node")
+    if allocation["exclusive_node"] is not False:
+        raise CalibrationContractError("runtime allocation must verify a shared node")
     integer_fields = (
         "requested_gpu_count",
         "visible_gpu_count",
@@ -387,26 +387,26 @@ def validate_runtime_allocation(value: Any) -> dict[str, Any]:
     for field in integer_fields:
         _require_plain_int(allocation[field], f"runtime_allocation.{field}")
     if allocation["requested_gpu_count"] != RESOURCE_CONTRACT["requested_gpu_count"]:
-        raise CalibrationContractError("runtime allocation must record a one-GPU request")
+        raise CalibrationContractError("runtime allocation must record a zero-GPU request")
     visible_count = allocation["visible_gpu_count"]
-    if visible_count < 1:
-        raise CalibrationContractError("runtime allocation must expose at least one GPU")
+    if visible_count != 0:
+        raise CalibrationContractError("runtime allocation must expose zero GPUs")
     models = allocation["visible_gpu_models"]
     memory_values = allocation["visible_gpu_memory_bytes"]
     if not isinstance(models, list) or len(models) != visible_count:
         raise CalibrationContractError("visible GPU models do not match visible_gpu_count")
     if not isinstance(memory_values, list) or len(memory_values) != visible_count:
         raise CalibrationContractError("visible GPU memory does not match visible_gpu_count")
-    if any(model != RESOURCE_CONTRACT["required_gpu_model"] for model in models):
-        raise CalibrationContractError("every visible runtime GPU must be NVIDIA L40S")
+    if models or memory_values:
+        raise CalibrationContractError("CPU-only runtime allocation must have empty GPU evidence")
     for index, memory_bytes in enumerate(memory_values):
         _require_plain_int(memory_bytes, f"runtime_allocation.visible_gpu_memory_bytes[{index}]")
         if memory_bytes < MINIMUM_GPU_MEMORY_BYTES:
-            raise CalibrationContractError("a visible runtime GPU has insufficient memory")
+            raise CalibrationContractError("visible GPU memory cannot be negative")
     if allocation["requested_cpus_per_task"] != RESOURCE_CONTRACT["requested_cpus_per_task"]:
-        raise CalibrationContractError("runtime allocation must record a 16-CPU task request")
+        raise CalibrationContractError("runtime allocation must record an 8-CPU task request")
     if allocation["available_cpu_count"] < RESOURCE_CONTRACT["requested_cpus_per_task"]:
-        raise CalibrationContractError("runtime allocation exposes fewer than 16 CPUs")
+        raise CalibrationContractError("runtime allocation exposes fewer than 8 CPUs")
     if allocation["available_host_memory_bytes"] < MINIMUM_HOST_MEMORY_BYTES:
         raise CalibrationContractError("runtime allocation has less than 64 GiB host memory")
     if (

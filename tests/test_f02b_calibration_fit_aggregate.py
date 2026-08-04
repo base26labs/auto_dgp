@@ -17,7 +17,6 @@ from cluster.f02b_calibration_grid import FIT_TASKS, fit_task_for_index
 from data.generate_nbody_confirmatory import ConfirmatoryConfig
 from experiments.f02b_calibration_contract import (
     F02_CATALOG_SHA256,
-    MINIMUM_GPU_MEMORY_BYTES,
     MINIMUM_HOST_MEMORY_BYTES,
     WALLTIME_SECONDS,
     canonical_json_bytes,
@@ -25,7 +24,7 @@ from experiments.f02b_calibration_contract import (
     parse_strict_json_bytes,
 )
 from experiments.f02b_calibration_fit import (
-    EXCLUSIVE_VERIFICATION_MODE,
+    SHARING_VERIFICATION_MODE,
     build_fit_artifacts,
     fit_artifact_paths,
     write_fit_artifacts_exclusive,
@@ -62,15 +61,12 @@ def _parameters() -> dict[str, object]:
 
 def _runtime_allocation() -> dict[str, object]:
     return {
-        "exclusive_node": True,
-        "requested_gpu_count": 1,
-        "visible_gpu_count": 2,
-        "visible_gpu_models": ["NVIDIA L40S", "NVIDIA L40S"],
-        "visible_gpu_memory_bytes": [
-            MINIMUM_GPU_MEMORY_BYTES,
-            MINIMUM_GPU_MEMORY_BYTES,
-        ],
-        "requested_cpus_per_task": 16,
+        "exclusive_node": False,
+        "requested_gpu_count": 0,
+        "visible_gpu_count": 0,
+        "visible_gpu_models": [],
+        "visible_gpu_memory_bytes": [],
+        "requested_cpus_per_task": 8,
         "available_cpu_count": 32,
         "available_host_memory_bytes": MINIMUM_HOST_MEMORY_BYTES,
         "requested_walltime_seconds": WALLTIME_SECONDS,
@@ -145,8 +141,8 @@ def _identity(base: Path, task_index: int) -> dict[str, Any]:
             "job_id": f"41{task.task_index:03d}",
             "array_job_id": "41000",
             "array_task_id": task.task_index,
-            "node_list": "gpu-l40s-01",
-            "exclusive_verification_mode": EXCLUSIVE_VERIFICATION_MODE,
+            "node_list": "cpu-shared-01",
+            "sharing_verification_mode": SHARING_VERIFICATION_MODE,
         },
     }
 

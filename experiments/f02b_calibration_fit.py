@@ -72,9 +72,9 @@ from experiments.f02b_calibration_contract import (
     verify_numeric_payload_bytes,
 )
 
-FIT_PAYLOAD_SCHEMA_VERSION = "f02b_calibration_fit_payload_v1"
+FIT_PAYLOAD_SCHEMA_VERSION = "f02b_calibration_fit_payload_v2"
 FIT_PAYLOAD_TYPE = "f02b_development_fit_parameters"
-EXCLUSIVE_VERIFICATION_MODE = "scontrol_show_job_oversubscribe_exclusive_v1"
+SHARING_VERIFICATION_MODE = "scontrol_show_job_oversubscribe_ok_v1"
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _HEX40 = re.compile(r"[0-9a-f]{40}\Z")
 _HEX64 = re.compile(r"[0-9a-f]{64}\Z")
@@ -682,7 +682,7 @@ def _validate_runtime(value: object) -> dict[str, Any]:
 def _validate_scheduler(value: object, task: F02bCalibrationFitTask) -> dict[str, Any]:
     scheduler = _require_exact_keys(
         value,
-        {"array_job_id", "array_task_id", "exclusive_verification_mode", "job_id", "node_list"},
+        {"array_job_id", "array_task_id", "job_id", "node_list", "sharing_verification_mode"},
         "provenance.scheduler",
     )
     for name in ("array_job_id", "job_id"):
@@ -690,8 +690,8 @@ def _validate_scheduler(value: object, task: F02bCalibrationFitTask) -> dict[str
         if re.fullmatch(r"[0-9]+", identifier) is None:
             raise CalibrationFitError(f"scheduler.{name} must be a decimal digit string")
     _require_text(scheduler["node_list"], "scheduler.node_list")
-    if scheduler["exclusive_verification_mode"] != EXCLUSIVE_VERIFICATION_MODE:
-        raise CalibrationFitError("scheduler exclusive verification mode is not registered")
+    if scheduler["sharing_verification_mode"] != SHARING_VERIFICATION_MODE:
+        raise CalibrationFitError("scheduler sharing verification mode is not registered")
     if _require_int(scheduler["array_task_id"], "scheduler.array_task_id") != task.task_index:
         raise CalibrationFitError("scheduler array task does not match the fit task")
     return scheduler
@@ -983,7 +983,7 @@ def _run_scontrol_job_record(job_id: str) -> dict[str, str]:
     return fields
 
 
-def _observe_cuda_and_cpu_affinity() -> tuple[int, list[str], list[int]]:
+def _observe_cpu_only_affinity() -> int:
     try:
         affinity = os.sched_getaffinity(0)
     except (AttributeError, OSError) as error:
@@ -992,28 +992,15 @@ def _observe_cuda_and_cpu_affinity() -> tuple[int, list[str], list[int]]:
     if type(available_cpu_count) is not int or available_cpu_count <= 0:
         raise CalibrationFitError("process CPU affinity is empty")
     try:
-        if not torch.cuda.is_available():
-            raise CalibrationFitError("CUDA is unavailable to the fit process")
+        cuda_available = torch.cuda.is_available()
         visible_gpu_count = torch.cuda.device_count()
-        if type(visible_gpu_count) is not int or visible_gpu_count < 1:
-            raise CalibrationFitError("no CUDA devices are visible to the fit process")
-        properties = [torch.cuda.get_device_properties(index) for index in range(visible_gpu_count)]
-    except CalibrationFitError:
-        raise
     except Exception as error:
-        raise CalibrationFitError("cannot inspect CUDA device properties") from error
-    models: list[str] = []
-    memory_bytes: list[int] = []
-    for index, device in enumerate(properties):
-        name = getattr(device, "name", None)
-        total_memory = getattr(device, "total_memory", None)
-        if type(name) is not str or not name:
-            raise CalibrationFitError(f"CUDA device {index} has no valid model name")
-        if type(total_memory) is not int or total_memory <= 0:
-            raise CalibrationFitError(f"CUDA device {index} has no valid memory size")
-        models.append(name)
-        memory_bytes.append(total_memory)
-    return available_cpu_count, models, memory_bytes
+        raise CalibrationFitError("cannot inspect CUDA visibility") from error
+    if type(cuda_available) is not bool or type(visible_gpu_count) is not int:
+        raise CalibrationFitError("CUDA visibility inspection returned invalid values")
+    if cuda_available or visible_gpu_count != 0:
+        raise CalibrationFitError("CPU-only fit process must expose zero CUDA devices")
+    return available_cpu_count
 
 
 def _observe_runtime_evidence(
@@ -1044,11 +1031,10 @@ def _observe_runtime_evidence(
         "ArrayJobId": array_job_id,
         "ArrayTaskId": str(task.task_index),
         "ArrayTaskThrottle": "1",
-        "OverSubscribe": "EXCLUSIVE",
+        "OverSubscribe": "OK",
         "TimeLimit": "08:00:00",
-        "CPUs/Task": "16",
+        "CPUs/Task": "8",
         "MinMemoryNode": "64G",
-        "TresPerNode": "gres/gpu:l40s:1",
         "NumNodes": "1",
     }
     mismatched = [name for name, expected in exact_fields.items() if fields.get(name) != expected]
@@ -1057,8 +1043,10 @@ def _observe_runtime_evidence(
             f"live scontrol job fields violate the F02b contract: {sorted(mismatched)}"
         )
     partition = fields.get("Partition")
-    if partition not in {"short", "interactivegpu"}:
+    if partition != "short":
         raise CalibrationFitError("live scontrol partition is not registered")
+    if any("gres/gpu" in field_value.lower() for field_value in fields.values()):
+        raise CalibrationFitError("live scontrol job must request zero GPUs")
     if partition != _required_environment("SLURM_JOB_PARTITION"):
         raise CalibrationFitError("live scontrol partition disagrees with Slurm environment")
     node_list = fields.get("NodeList")
@@ -1067,14 +1055,14 @@ def _observe_runtime_evidence(
     if node_list != _required_environment("SLURM_JOB_NODELIST"):
         raise CalibrationFitError("live scontrol node list disagrees with Slurm environment")
 
-    available_cpu_count, models, memory_bytes = _observe_cuda_and_cpu_affinity()
+    available_cpu_count = _observe_cpu_only_affinity()
     allocation = {
-        "exclusive_node": True,
-        "requested_gpu_count": 1,
-        "visible_gpu_count": len(models),
-        "visible_gpu_models": models,
-        "visible_gpu_memory_bytes": memory_bytes,
-        "requested_cpus_per_task": 16,
+        "exclusive_node": False,
+        "requested_gpu_count": 0,
+        "visible_gpu_count": 0,
+        "visible_gpu_models": [],
+        "visible_gpu_memory_bytes": [],
+        "requested_cpus_per_task": 8,
         "available_cpu_count": available_cpu_count,
         "available_host_memory_bytes": MINIMUM_HOST_MEMORY_BYTES,
         "requested_walltime_seconds": WALLTIME_SECONDS,
@@ -1087,7 +1075,7 @@ def _observe_runtime_evidence(
         "array_job_id": fields["ArrayJobId"],
         "array_task_id": int(fields["ArrayTaskId"]),
         "node_list": node_list,
-        "exclusive_verification_mode": EXCLUSIVE_VERIFICATION_MODE,
+        "sharing_verification_mode": SHARING_VERIFICATION_MODE,
     }
     try:
         validated_allocation = validate_runtime_allocation(allocation)
@@ -1326,8 +1314,8 @@ def default_identity_provider(
     catalog = catalog_path.resolve()
     root = repo_root.resolve()
 
-    # Refuse an unregistered/shared execution before reading corpus bytes or
-    # allocating the train tensors on CUDA.  Preload the production adapter
+    # Refuse an unregistered/exclusive execution before reading corpus bytes or
+    # allocating the train tensors on CPU.  Preload the production adapter
     # first so the source identity covers the code that will actually run.
     _preload_default_fit_implementation(root)
     runtime_allocation, scheduler = _observe_runtime_evidence(task)
@@ -1562,7 +1550,7 @@ if __name__ == "__main__":
 
 __all__ = [
     "CalibrationFitError",
-    "EXCLUSIVE_VERIFICATION_MODE",
+    "SHARING_VERIFICATION_MODE",
     "FIT_PAYLOAD_SCHEMA_VERSION",
     "FIT_PAYLOAD_TYPE",
     "FitArtifactPaths",
