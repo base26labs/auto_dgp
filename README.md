@@ -23,12 +23,15 @@ Two reference points ground the loop:
   ([Seung & Katzfuss 2026](https://arxiv.org/abs/2606.02909); see [`docs/REFERENCES.md`](docs/REFERENCES.md)).
 
 Within the substrate, the loop's concrete objective is to beat these on value RMSE **and** calibration
-(NLL) under a fixed budget.
+(NLL) under a preregistered data and model configuration.
 
 The current candidate is **SPARK**, a physics-informed pairwise radial-kinetic derivative GP. Its
 assumptions and limits are documented in [`docs/SPARK.md`](docs/SPARK.md). A source-frozen experiment
 compares SPARK with TERA across particle counts `{2, 4, 10}`, spatial dimensions `{1, 2, 3}`, and
-three independent systems per configuration; results are pending.
+three independent systems per configuration. SPARK wins value and gradient RMSE in all nine cells
+and raw NLL in eight, but the strict all-metric gate **fails** because TERA has lower NLL at
+`(n=4, d=3)`. See the [full result table](docs/RESEARCH_LOG.md) and
+[committed evidence](evidence/f01_spark_nd/README.md).
 
 ## Getting started
 
@@ -52,6 +55,7 @@ uv run python experiments/nbody_benchmark.py
 | `data/get_nbody.py` | frozen starter N-body generator |
 | `data/get_nbody_sweep.py` | fixed-system generator for the varying-`(n, d)` experiment |
 | `experiments/` | benchmarks and experiments |
+| `evidence/` | committed raw results, summaries, hashes, and scheduler ledgers |
 | `tests/` | correctness tests (the factored kernel matvec == dense, CG == exact) |
 | `CLAUDE.md` | the research-loop rules and hygiene checklist |
 | `docs/` | `STARTUP.md`, `REFERENCES.md`, and (as work proceeds) `RESEARCH_LOG.md` and `learnings.md` |

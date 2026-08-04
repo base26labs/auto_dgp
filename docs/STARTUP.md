@@ -52,7 +52,7 @@ all five gives the full D-sweep. Each file holds `X` (state `[q,p]`), `E` (value
 ## 4. Verify the install
 
 ```bash
-uv run pytest -q                                   # 17 tests: the factored/blocked matvec == dense, CG == exact
+uv run pytest -q                                   # correctness plus committed-evidence checks
 uv run python experiments/nbody_benchmark.py       # base exact DGP vs TERA, grad RMSE + val RMSE/NLL
 ```
 

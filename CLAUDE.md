@@ -21,13 +21,12 @@ needed is in this directory; the doc below is complete on its own.
 
 ## Status
 
-Just starting. Data, both baselines (TERA, exact DGP), and a first benchmark
-(`experiments/nbody_benchmark.py`, which loads + standardizes the data and scores both arms) are in
-place. `results.tsv` and `docs/RESEARCH_LOG.md` exist but are **empty** (header row / no entries);
-`docs/learnings.md` does not exist yet. No baseline has been recorded, so no number is yet
-interpretable. The exact arm selects its lengthscale **and** its (value, derivative) noise pair on a
-validation split, so it is equipped comparably to TERA's learned `sigma_f`/`sigma_g`.
-**Next: record the baselines** (run the benchmark, log the numbers) before any experiments.
+The first source-frozen research experiment is complete. F01 compares the physics-informed SPARK
+model with TERA across nine particle-count/spatial-dimension configurations and three independent
+systems per configuration. SPARK wins both RMSE metrics in every cell and NLL in eight of nine, but
+the preregistered overall gate fails on `(n=4,d=3)` NLL. The full table is in
+`docs/RESEARCH_LOG.md`; raw evidence and provenance are under `evidence/f01_spark_nd/`.
+**Next: diagnose calibration in a new preregistered experiment. Do not retune or rewrite F01.**
 
 ## Layout
 
@@ -42,11 +41,14 @@ validation split, so it is equipped comparably to TERA's learned `sigma_f`/`sigm
 | `gp/exact/` | dense `solve_exact`, posterior mean/grad prediction, `gaussian_nll` | yes |
 | `gp/common/` | target/noise assembly (`stack_targets`, `noise_vector`) | yes |
 | `gp/metrics.py` | shared metrics | frozen once harness exists |
-| `experiments/fNN_*.py` | one file per experiment, registered in `experiments/expt_registry.py` (created with the first experiment) | yes — this is where work happens |
+| `gp/spark/` | physics-informed pairwise radial-kinetic derivative GP | yes, with tests |
+| `experiments/fNN_*.py` | one preregistered file per experiment | yes — this is where work happens |
+| `evidence/fNN_*/` | committed raw records, summaries, hashes, and run ledgers | append per experiment |
 
 **Data format** (`np.load`): `X` — state `[q, p]` flattened, shape `(N, 2·n·d)`; `E` — the scalar
-target value `(N,)`; `F` — its full gradient `dH/dx` `(N, 2·n·d)`. Files:
-`nbody_n{2,4,6,8,10}_d3.npz` (~9.5k rows) and `*_100k.npz` (100k rows).
+target value `(N,)`; `F` — its full gradient `dH/dx` `(N, 2·n·d)`. Legacy starter files use
+`nbody_n{n}_d3.npz`; F01 uses ignored `nbody_sweep_n{n}_d{d}_s{seed}.npz` archives with explicit
+trajectory IDs and fixed-system metadata.
 
 **Derivative-GP system.** Methods solve the dual `(K + Λ) α = y`, where `y = stack_targets(E, F)`
 is the per-point `[value, grad…]` stack (length `N·(D+1)`), `Λ = noise_vector(...)` is the

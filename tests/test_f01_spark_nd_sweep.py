@@ -9,6 +9,9 @@ import pytest
 
 import experiments.f01_spark_nd_sweep as benchmark
 
+EVIDENCE_ROOT = Path(__file__).resolve().parents[1] / "evidence" / "f01_spark_nd"
+FROZEN_SOURCE_COMMIT = "a177883a6751372ce5fa8818b0442944f3cafa4e"
+
 
 def test_task_matrix_is_three_by_three_by_three_by_two() -> None:
     configurations = {(cell["n_particles"], cell["spatial_dims"]) for cell in benchmark.CELL_SPECS}
@@ -101,3 +104,42 @@ def test_summary_rejects_unpaired_dataset_bytes(tmp_path) -> None:
 
     with pytest.raises(ValueError, match="different dataset bytes"):
         benchmark.summarize(tmp_path)
+
+
+def test_committed_evidence_recomputes_canonical_summary() -> None:
+    summary_path = EVIDENCE_ROOT / "summary.json"
+    summary = benchmark.summarize(EVIDENCE_ROOT)
+
+    assert benchmark.canonical_json_bytes(summary) == summary_path.read_bytes()
+    assert summary["source_commit"] == FROZEN_SOURCE_COMMIT
+    assert summary["task_count"] == 54
+    assert summary["all_configurations_pass"] is False
+    failed = {
+        name
+        for name, result in summary["configurations"].items()
+        if not result["spark_lower_all_three_metrics"]
+    }
+    assert failed == {"n4_d3"}
+
+    manifest = {
+        Path(filename).name: digest
+        for digest, filename in (
+            line.split(maxsplit=1)
+            for line in (EVIDENCE_ROOT / "data_sha256.tsv").read_text().splitlines()[1:]
+        )
+    }
+    assert len(manifest) == 27
+    result_paths = list((EVIDENCE_ROOT / "results").glob("**/*.json"))
+    assert len(result_paths) == 54
+    for result_path in result_paths:
+        result = json.loads(result_path.read_bytes())
+        assert manifest[result["dataset_name"]] == result["dataset_sha256"]
+
+    for ledger_name, task_count in (("slurm_generate.tsv", 27), ("slurm_benchmark.tsv", 54)):
+        rows = (EVIDENCE_ROOT / ledger_name).read_text().splitlines()
+        assert len(rows) == task_count + 1
+        header = rows[0].split("\t")
+        records = [dict(zip(header, row.split("\t"), strict=True)) for row in rows[1:]]
+        assert all(record["State"] == "COMPLETED" for record in records)
+        assert all(record["ExitCode"] == "0:0" for record in records)
+        assert all(record["AllocCPUS"] == "8" for record in records)

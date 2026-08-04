@@ -31,4 +31,6 @@ class; ambiguous structure discovery fails closed.
 
 The varying-`(n, d)` benchmark in `experiments/f01_spark_nd_sweep.py` tests the same frozen SPARK
 configuration against TERA across particle counts `{2, 4, 10}`, spatial dimensions `{1, 2, 3}`, and
-three independently generated systems per configuration.
+three independently generated systems per configuration. SPARK lowers mean value and gradient RMSE
+in all nine cells, but does not pass the all-metric gate: TERA has better NLL for `(n=4,d=3)`. This
+calibration failure and the full table are recorded in `docs/RESEARCH_LOG.md`.
