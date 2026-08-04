@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
@@ -111,7 +112,7 @@ def load_results(input_root: Path) -> list[dict[str, Any]]:
         if [result["task"]["n_train"] for result in selected] != list(TRAINING_SIZES):
             raise ValueError("N-scaling training-size grid is incomplete")
         reference_test = selected[0]["split"]["test_source_indices"]
-        for smaller, larger in zip(selected, selected[1:], strict=True):
+        for smaller, larger in pairwise(selected):
             if (
                 larger["split"]["train_source_indices"][: smaller["task"]["n_train"]]
                 != smaller["split"]["train_source_indices"]
