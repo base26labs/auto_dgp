@@ -195,6 +195,7 @@ def test_work_plans_exactly_expand_reference_sweep_and_replay_roles() -> None:
         support_target_count=3,
         stress_m=7,
         stress_support_target_count=1,
+        stress_max_iterations=168,
         full_q_m=50,
         production_tolerance=PRODUCTION_TOLERANCE,
         shared_tolerance_sweep=SHARED_TOLERANCE_SWEEP,
@@ -230,7 +231,7 @@ def test_all_122_work_plans_are_canonical_and_bound_by_literal_hash() -> None:
     assert len(records) == len(PROBE_TASKS) == 122
     assert [record["task_index"] for record in records] == list(range(122))
     assert PROBE_WORK_PLAN_SHA256 == (
-        "7cfefba00c1f25d801dc7877111b35899528971b1315cf13ed8a0a2c5e6a5813"
+        "11b3dd9863cbd010eb50e95f4f4a5941080eb10186731a34f0625dd9fd5b6586"
     )
     assert payload["hash_domain"] == PROBE_WORK_PLAN_HASH_DOMAIN
     assert payload["schema_version"] == PROBE_WORK_PLAN_SCHEMA_VERSION

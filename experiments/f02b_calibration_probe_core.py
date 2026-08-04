@@ -52,9 +52,14 @@ SHARED_TOLERANCE_SWEEP = (
 )
 FP64_ONLY_TOLERANCE_SWEEP = (1e-9, 1e-10, 1e-11, 1e-12)
 SOLVER_MAX_ITERATIONS_CAP = 4096
+STRESS_TOLERANCE = 1e-10
+STRESS_FIXED_PROBE_COUNT = 4
+STRESS_PROBE_HASH_DOMAIN = "auto_dgp2.f02b.stress_rademacher_probe_v1"
+STRESS_PERMUTATION_RULE = "reverse_fixed_neighbour_order"
+STRESS_SUPPORT_ROTATION_RULE = "adjacent_givens_pi_over_4"
 
 PROBE_WORK_PLAN_HASH_DOMAIN = "auto_dgp2.f02b.probe_work_plan"
-PROBE_WORK_PLAN_SCHEMA_VERSION = "f02b_calibration_probe_work_plan_v2"
+PROBE_WORK_PLAN_SCHEMA_VERSION = "f02b_calibration_probe_work_plan_v3"
 
 
 class ProbeCoreInputError(ValueError):
@@ -96,6 +101,7 @@ class ProbeWorkPlan:
     support_target_count: int
     stress_m: int | None
     stress_support_target_count: int
+    stress_max_iterations: int | None
     full_q_m: int | None
     production_tolerance: float
     shared_tolerance_sweep: tuple[float, ...]
@@ -403,6 +409,14 @@ def build_probe_work_plan(task: F02bCalibrationProbeTask) -> ProbeWorkPlan:
     physical_rank = min(task.m, dimension - 6)
     max_iterations = min(4 * task.m * physical_rank, SOLVER_MAX_ITERATIONS_CAP)
     full_q_m = REFERENCE_M if task.m == REFERENCE_M else None
+    stress_max_iterations = (
+        None
+        if task.stress_m is None
+        else min(
+            4 * task.stress_m * min(task.stress_m, dimension - 6),
+            SOLVER_MAX_ITERATIONS_CAP,
+        )
+    )
 
     if task.role == "reproducibility":
         if task.geometry_m_values != (REFERENCE_M,) or task.stress_m is not None:
@@ -424,6 +438,7 @@ def build_probe_work_plan(task: F02bCalibrationProbeTask) -> ProbeWorkPlan:
         support_target_count=task.support_target_count,
         stress_m=task.stress_m,
         stress_support_target_count=task.stress_support_target_count,
+        stress_max_iterations=stress_max_iterations,
         full_q_m=full_q_m,
         production_tolerance=PRODUCTION_TOLERANCE,
         shared_tolerance_sweep=SHARED_TOLERANCE_SWEEP,
@@ -483,6 +498,40 @@ def canonical_probe_work_plan_payload() -> dict[str, Any]:
         "stress_registry": {
             "eligible": "repeat_id_0_seed_11_at_m_D_minus_5",
             "target": "worst",
+            "compute_dtype": "exact_promoted_source_fp32_to_cpu_float64",
+            "neighbours": "stress_m_fixed_once_by_pinned_vendor_source_fp32_order",
+            "rank_cutoff": "absolute_source_fp32_N0_cutoff",
+            "solve": {
+                "requested_tolerance": STRESS_TOLERANCE,
+                "max_iterations": "min(4*stress_m*min(stress_m,D-6),4096)",
+                "initial_guess": "zero",
+                "function_jitter": 1e-8,
+                "q_coordinate_jitter": 1e-8,
+            },
+            "support_complement": {
+                "probe_count": STRESS_FIXED_PROBE_COUNT,
+                "probe_distribution": "sha256_counter_rademacher",
+                "probe_hash_domain": STRESS_PROBE_HASH_DOMAIN,
+                "projection": "source_fp32_q_projector_exactly_promoted_to_float64",
+            },
+            "permutation": {
+                "rule": STRESS_PERMUTATION_RULE,
+                "transform": "neighbours_values_gradients_and_q_projector_together",
+            },
+            "support_rotation": {
+                "rule": STRESS_SUPPORT_ROTATION_RULE,
+                "transform": "coordinates_q_to_z_observations_noise_rhs_and_solution",
+            },
+            "exact_zero_augmentation": {
+                "rule": "append_one_exact_zero_ambient_coordinate_and_gradient",
+                "cutoff": "hold_original_absolute_source_fp32_cutoff",
+                "maxshape_change": "representation_only_not_rank_reselection",
+            },
+            "discarded_mode_leakage": {
+                "reference": "source_fp32_cutoff_selected_support",
+                "comparison": "native_fp64_smax_maxshape_eps64_support",
+                "neighbours": "identical_fixed_source_fp32_rows",
+            },
             "tests": [
                 "support_complement",
                 "permutation",
@@ -518,7 +567,7 @@ def _sha256(value: Any) -> str:
 
 
 # Frozen after building the complete domain-separated probe-core plan.
-PROBE_WORK_PLAN_SHA256 = "7cfefba00c1f25d801dc7877111b35899528971b1315cf13ed8a0a2c5e6a5813"
+PROBE_WORK_PLAN_SHA256 = "11b3dd9863cbd010eb50e95f4f4a5941080eb10186731a34f0625dd9fd5b6586"
 
 
 def _validate_work_plan_matrix() -> None:

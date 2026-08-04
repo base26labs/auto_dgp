@@ -7,6 +7,31 @@ scope downgrades are reported in place, loudly, naming the check that failed.
 
 ---
 
+## 2026-08-04 — Registered F02b rank-boundary stress suite: **implemented and locally verified, not executed on corpus**
+
+The work-plan schema is now v3 with hash
+`11b3dd9863cbd010eb50e95f4f4a5941080eb10186731a34f0625dd9fd5b6586`; it supersedes the earlier
+v2 hash before any probe corpus run.  The plan now binds the stress computation to exact promotion
+of the source-fp32 arm onto CPU float64, the source-selected neighbour rows and absolute cutoff, a
+zero-start `1e-10` solve with a formula-derived iteration cap, four deterministic SHA-counter
+Rademacher probes, reverse-neighbour permutation, adjacent-pair pi/4 support rotation, exact-zero
+ambient augmentation, and a native-fp64 cutoff comparison.
+
+The registered executor scans all 100 label-free N0 geometries only for eligible repeat-zero,
+seed-11 reference tasks and runs the five checks on the single worst target.  Its matrix-free full-q
+operator diagnoses support/complement action without allocating the dense q system; the q RHS and
+conditioned observations are assembled independently and differenced against the ORBIT support map.
+A single synthetic registered fixture (`m=7`, rank 6, target 73) converged with relative residual
+about `3.32e-11`; the two direct-to-support-map maximum differences were about `7.77e-16` and
+`7.99e-15`.
+Permutation, support rotation, and exact-zero augmentation preserved the posterior moments within
+the compact fixture assertions.  This is numerical mechanism evidence only, not corpus accuracy,
+runtime, cost, or superiority evidence.  No corpus, evaluation label, GPU, Slurm job, or
+confirmatory replica was accessed.  Artifact integration, strict intake, threshold discovery, and
+authorized shared-CPU calibration remain pending.
+
+---
+
 ## 2026-08-04 — Registered F02b full-q precision ladder: **implemented and locally verified, not executed on corpus**
 
 The released TERA `m=50` diagnostic now calls the pinned private one-target predictor and intercepts

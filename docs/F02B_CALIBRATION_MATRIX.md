@@ -21,7 +21,7 @@ RBF fixture are now present.  The label-free probe foundation is also present: i
 100 registered development-validation coordinate rows without touching `E` or `F`, freezes pinned
 vendor neighbours only in source fp32, and expands all 122 task records into the domain-separated
 probe-core work-plan hash
-`7cfefba00c1f25d801dc7877111b35899528971b1315cf13ed8a0a2c5e6a5813`.  That hash also covers the
+`11b3dd9863cbd010eb50e95f4f4a5941080eb10186731a34f0625dd9fd5b6586`.  That hash also covers the
 development replicas, exact evaluation design, neighbour/tie policy, rank rule, strata, stress
 registry, and four-arm full-q registry.  The neighbour boundary rejects short training populations,
 train/evaluation source overlap, nonfinite fp32 scaling or distances, and every selected or boundary
@@ -55,10 +55,13 @@ registered neighbours, selected N0 strata, and the frozen absolute source-fp32 c
 target evidence can be copied immediately into immutable canonical bytes with a raw SHA-256.  The
 registered full-q adapter now intercepts the pinned released one-target path, authenticates its
 rebuilt intermediates against the actual function and q Cholesky inputs, and executes the four
-registered precision arms on CPU.  The stress adapter, full-q artifact integration, strict 122-slot
-intake and aggregate, discovery/locked-holdout threshold workflow, and probe Slurm runner remain
-incomplete.  This checkpoint therefore still authorizes no Slurm submission and no confirmatory
-access.
+registered precision arms on CPU.  The registered stress adapter now fixes its exact-promoted
+CPU-float64 solve, source-fp32 neighbours and cutoff, zero start, tolerance and iteration cap,
+hash-derived probes, reverse permutation, adjacent Givens support rotation, zero-coordinate
+augmentation, and native-fp64 cutoff comparison.  Full-q/stress artifact integration, strict
+122-slot intake and aggregate, discovery/locked-holdout threshold workflow, and the probe Slurm
+runner remain incomplete.  This checkpoint therefore still authorizes no Slurm submission and no
+confirmatory access.
 
 The earlier v3 artifact from job 2810629 motivated the strata and fault tests but is excluded from
 fitting numerical thresholds.  In particular, its observed errors may not be rounded upward and
@@ -348,6 +351,16 @@ Real-data sentinel strata are also rerun through CPU float64 linear algebra.  Fi
 permutations must transform projectors as `Pi^T P Pi`; retained-support rotations must transform
 coordinates, observations, noise, and the q-jitter metric together; and exact-zero augmentation must
 leave rank and moments invariant within proposed bounds.
+
+The implemented stress executor is restricted to the registered repeat-zero, seed-11 reference
+tasks at `m=D-5` and selects only the worst geometry target from the complete ordered 100-target N0
+scan.  It promotes the bound source-fp32 inputs exactly to CPU float64 while holding the original
+absolute rank cutoff.  Four deterministic SHA-counter Rademacher probes diagnose the complete q
+support/complement action without materializing the q system.  The q-space RHS and conditioned
+observations are also assembled directly and differenced against the ORBIT support map.  The
+remaining checks apply the frozen reverse-neighbour permutation, adjacent-pair pi/4 support rotation,
+one exact zero ambient coordinate/gradient, and a native-fp64 cutoff comparison.  Nonconvergence and
+added native modes remain recorded scientific output rather than triggering an unregistered repair.
 
 ## Threshold proposal and locked holdout
 

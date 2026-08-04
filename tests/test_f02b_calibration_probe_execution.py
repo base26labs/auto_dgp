@@ -55,6 +55,12 @@ from experiments.f02b_calibration_probe_execution import (
     scan_registered_source_geometry,
     select_registered_orbit_strata,
 )
+from experiments.f02b_calibration_stress import (
+    build_registered_stress_inputs,
+    execute_registered_stress_target,
+    scan_registered_stress_geometry,
+    select_registered_stress_stratum,
+)
 from gp.orbit import (
     LocalGeometry,
     build_local_geometry,
@@ -153,6 +159,43 @@ def _geometry_and_strata(arm32: RegisteredOrbitArmInputs):
         for position in range(PRIMARY_EVALUATION_ROW_COUNT)
     )
     return geometries, select_registered_orbit_strata(arm32, geometries)
+
+
+def test_registered_stress_suite_covers_its_core_invariants() -> None:
+    arm32 = _synthetic_arm(task_index=0, train_count=64)
+    stress = build_registered_stress_inputs(arm32)
+    geometries = tuple(
+        scan_registered_stress_geometry(arm32, stress, position)
+        for position in range(PRIMARY_EVALUATION_ROW_COUNT)
+    )
+    strata = select_registered_stress_stratum(arm32, stress, geometries)
+    execution = execute_registered_stress_target(
+        arm32,
+        promote_registered_orbit_arm_to_float64(arm32),
+        stress,
+        geometries[strata.selected_target_position],
+        strata,
+    )
+
+    assert execution.m == 7
+    assert execution.selected_rank == 6
+    assert execution.base_solve["converged"] is True
+    assert set(execution.tests) == {
+        "support_complement",
+        "permutation",
+        "support_rotation",
+        "exact_zero_augmentation",
+        "discarded_mode_leakage",
+    }
+    mapping = execution.tests["support_complement"]["support_map_differences"]
+    assert max(mapping.values()) < 1e-12
+    for name in ("permutation", "support_rotation", "exact_zero_augmentation"):
+        assert max(execution.tests[name]["moments"].values()) < 1e-10
+
+
+def test_nonreference_task_rejects_registered_stress_suite() -> None:
+    with pytest.raises(ProbeExecutionInputError, match="not eligible"):
+        build_registered_stress_inputs(_synthetic_arm())
 
 
 def test_label_free_evaluation_copy_has_no_label_surface() -> None:
