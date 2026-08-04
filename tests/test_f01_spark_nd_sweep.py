@@ -39,6 +39,26 @@ def test_task_matrix_is_three_by_three_by_three_by_two() -> None:
             benchmark.task_assignment(invalid)
 
 
+def test_source_snapshot_rejects_untracked_source(monkeypatch) -> None:
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str], **kwargs):
+        commands.append(command)
+        return benchmark.subprocess.CompletedProcess(
+            command,
+            returncode=0,
+            stdout="?? gp/untracked_helper.py\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(benchmark.subprocess, "run", fake_run)
+
+    with pytest.raises(RuntimeError, match="tracked or untracked modifications"):
+        benchmark.source_snapshot()
+    assert "--untracked-files=all" in commands[0]
+    assert "--ignore-submodules=none" in commands[0]
+
+
 def _fake_result(task_id: int, spark_nll: float = -1.0) -> dict:
     cell, arm = benchmark.task_assignment(task_id)
     spark = arm == "spark"

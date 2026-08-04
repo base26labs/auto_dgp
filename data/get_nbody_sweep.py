@@ -76,8 +76,14 @@ def generate_nbody_sweep_dataset(
 
     if n_particles < 2 or n_dims < 1 or seed < 0:
         raise ValueError("n_particles >= 2, n_dims >= 1, and a nonnegative seed are required")
-    if n_trajectories < 2 or not 1 <= rows_per_trajectory <= steps_per_trajectory:
-        raise ValueError("trajectory and row counts are inconsistent")
+    if (
+        n_trajectories < 2
+        or steps_per_trajectory < 2
+        or not 1 <= rows_per_trajectory <= steps_per_trajectory
+    ):
+        raise ValueError(
+            "at least two trajectories and integration steps are required, with rows <= steps"
+        )
     if dt <= 0 or gravitational_constant <= 0 or softening <= 0:
         raise ValueError("physical scale parameters must be positive")
 

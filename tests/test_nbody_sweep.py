@@ -59,3 +59,23 @@ def test_sweep_generator_rejects_invalid_schema(n_particles: int, n_dims: int, s
             rows_per_trajectory=2,
             steps_per_trajectory=2,
         )
+
+
+@pytest.mark.parametrize(
+    ("n_trajectories", "rows_per_trajectory", "steps_per_trajectory"),
+    [(1, 1, 2), (2, 0, 2), (2, 3, 2), (2, 1, 1)],
+)
+def test_sweep_generator_rejects_invalid_trajectory_counts(
+    n_trajectories: int,
+    rows_per_trajectory: int,
+    steps_per_trajectory: int,
+) -> None:
+    with pytest.raises(ValueError, match="at least two trajectories and integration steps"):
+        generate_nbody_sweep_dataset(
+            n_particles=2,
+            n_dims=1,
+            seed=0,
+            n_trajectories=n_trajectories,
+            rows_per_trajectory=rows_per_trajectory,
+            steps_per_trajectory=steps_per_trajectory,
+        )

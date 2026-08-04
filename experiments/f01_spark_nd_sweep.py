@@ -148,14 +148,20 @@ def source_snapshot() -> dict[str, Any]:
     """Bind results to one clean source commit and the pinned TERA submodule."""
 
     status = subprocess.run(
-        ["git", "status", "--porcelain", "--untracked-files=no"],
+        [
+            "git",
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=all",
+            "--ignore-submodules=none",
+        ],
         cwd=ROOT,
         check=True,
         capture_output=True,
         text=True,
     ).stdout
     if status:
-        raise RuntimeError("benchmark source checkout has tracked modifications")
+        raise RuntimeError("benchmark source checkout has tracked or untracked modifications")
     commit = subprocess.run(
         ["git", "rev-parse", "HEAD"],
         cwd=ROOT,
