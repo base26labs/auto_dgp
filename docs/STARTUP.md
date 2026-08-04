@@ -58,10 +58,33 @@ uv run python experiments/nbody_benchmark.py       # base exact DGP vs TERA, gra
 
 If the tests pass and the benchmark prints a table for both arms, the setup is correct.
 
+## 5. Run the SPARK `(n, d)` sweep
+
+F01 uses independent fixed-mass datasets and whole-trajectory splits. Generate its 27 systems, run
+both arms, and summarize the 54 result artifacts with:
+
+```bash
+for task in $(seq 0 26); do
+    uv run python experiments/f01_spark_nd_sweep.py generate-task \
+        --task-id "$task" --data-dir data/nbody_sweep
+done
+for task in $(seq 0 53); do
+    uv run python experiments/f01_spark_nd_sweep.py run-task \
+        --task-id "$task" --data-dir data/nbody_sweep --result-root runs/f01
+done
+uv run python experiments/f01_spark_nd_sweep.py summarize \
+    --result-root runs/f01 --out runs/f01/summary.json
+```
+
+The Slurm launchers in `experiments/f01_*_shared8.sbatch` run the same task matrices on shared
+eight-CPU allocations. Use a unique `RUN_ROOT`; resource records are diagnostic only.
+
 ## What is frozen / external
 
 - `gp/tera/` — the TERA baseline (submodule under `vendor/`, plus a thin wrapper). **Never edit.**
 - `data/get_nbody.py` — the dataset generator. Frozen.
+- `data/get_nbody_sweep.py` — the F01 fixed-system extension; do not change after generating F01
+  evidence without invalidating and rerunning both arms.
 - `gp/kernels/`, `gp/cg/`, `gp/exact/`, `gp/common/` — the base exact derivative GP. This is the
   code the research loop develops against; see `CLAUDE.md` for the loop rules and `docs/REFERENCES.md`
   for the prior work each piece builds on.

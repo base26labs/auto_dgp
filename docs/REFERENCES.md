@@ -49,6 +49,14 @@ identity part), `B` (grad–grad outer-product part) — so the matvec is `O(N²
 - Katzfuss, M. & Guinness, J. (2021). *A General Framework for Vecchia Approximations of Gaussian
   Processes.* Statistical Science. <https://arxiv.org/abs/1708.06302>
 
+**SPARK pairwise radial prior** — `gp/spark/`. SPARK combines additive GPs, derivative observations,
+and symmetry-preserving pair-distance features; the repository contribution under test is their
+fit-only, integrable composition.
+- Duvenaud, D., Nickisch, H. & Rasmussen, C. E. (2011). *Additive Gaussian Processes.* NeurIPS.
+  <https://papers.neurips.cc/paper_files/paper/2011/hash/4c5bde74a8f110656874902f07378009-Abstract.html>
+- Glielmo, A., Sollich, P. & De Vita, A. (2017). *Accurate Interatomic Force Fields via Machine
+  Learning with Covariant Kernels.* Physical Review B. <https://doi.org/10.1103/PhysRevB.95.214302>
+
 ## Data
 
 **N-body gravitational Hamiltonian** — `data/get_nbody.py`, `data/nbody/*.npz`. The synthetic substrate:

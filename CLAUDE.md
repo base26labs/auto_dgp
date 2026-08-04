@@ -141,4 +141,4 @@ process, not a failure.
   (vii) confounded measurement?* If you can't rule all seven out, the experiment is rigged — fix it
   before trusting the number.
 - Commit messages end with:
-  `Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>`
+  `Co-Authored-By: GPT-5.6 Sol <noreply@openai.com>`
