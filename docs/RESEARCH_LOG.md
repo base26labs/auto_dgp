@@ -7,6 +7,41 @@ scope downgrades are reported in place, loudly, naming the check that failed.
 
 ---
 
+## 2026-08-03 — F02b ORBIT reusable-system evidence: **implemented and locally verified, not executed**
+
+The probe-facing ORBIT numerical core now separates one-time local-system construction from
+independent zero-start solves.  `build_local_value_system` fixes the direct-SVD geometry, full
+distance Gram, actual Kff jitter and Cholesky factor, structured Schur operator, observations, and
+default preconditioner once per target/dtype.  `solve_local_value_system` can reuse those exact
+objects across the registered tolerance sweep without warm starts or implicit result caching, so the
+production `1e-5` result can be the sweep result itself rather than an untracked duplicate solve.
+The historical `predict_local_value` interface delegates to this split and retains its legacy mean
+evaluation order.
+
+Every returned CG result now binds the final source-dtype `A(x)` action, fresh residual, distinct
+recursive residual, requested tolerance, cap, termination reason, fresh-check count, replacement
+count, and exact matvec/preconditioner counts.  A recursive threshold crossing that fails a fresh
+check restarts from the fresh residual; reaching the cap is always reported as `maximum_iterations`.
+The post-update recurrence now fails closed on a nonfinite or nonpositive new preconditioned residual.
+
+The trusted GP builder records an analytic selected-support eigenvalue lower bound from the declared
+gradient-noise model and transformed q-jitter.  It also records a matrix-free block-row/Frobenius
+operator-norm upper bound conditional on the PSD kernel and positive function-noise-plus-jitter floor.
+The realised-observation functional `h=z-QKff^-1 y` gives the nominal exact-arithmetic mean solve
+bound `||h|| ||r||/lambda0`; the legacy and functional means and their signed reassociation delta are
+both retained.  These bounds cover only the represented selected-support iterative solve and are
+explicitly source-dtype, non-directed-rounding diagnostics with `floating_point_rigorous=false`.
+
+Local verification passed 110 focused ORBIT/F02-wrapper tests and the full repository suite
+(`668 passed, 1 skipped`).  The new dense audit spans 24 RBF/Matérn, scalar/ARD, three-noise-model,
+and full/truncated-rank combinations; all analytic lower bounds stayed below the stored dense
+minimum eigenvalue and all asserted upper bounds covered its spectral norm.  Six zero-noise-floor
+cases correctly made the solve certificates unavailable.  These shared-host tests are correctness
+checks only, not performance evidence.  No corpus, GPU, Slurm allocation, fit artifact, protected
+label, or confirmatory replica was accessed.
+
+---
+
 ## 2026-08-03 — F02b numerical calibration: **fit chain and probe foundation implemented, execution blocked**
 
 No calibration job has been submitted.  `F02B_NUMERICAL_CALIBRATION_v1` predeclares 45 fixed-budget

@@ -10,12 +10,14 @@ by this module.
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import torch
 
 from gp.orbit.operator import (
     CGResult,
+    LocalGeometry,
     OrthonormalReducedOperator,
     PosteriorCertificate,
     ReducedKroneckerPreconditioner,
@@ -36,6 +38,8 @@ class LocalPrediction:
     finite_precision_variance_correction: torch.Tensor
     solve: CGResult
     certificate: PosteriorCertificate
+    functional_mean: torch.Tensor | None = None
+    mean_reassociation_delta: torch.Tensor | None = None
 
 
 @dataclass(frozen=True)
@@ -54,6 +58,60 @@ class MarginalPredictions:
     floating_point_rigorous: torch.Tensor
     basis_exact: torch.Tensor
     finite_precision_variance_corrections: torch.Tensor
+    functional_mean: torch.Tensor | None = None
+    mean_reassociation_deltas: torch.Tensor | None = None
+    mean_error_upper_bounds: torch.Tensor | None = None
+    conditional_observation_norms: torch.Tensor | None = None
+    mean_solve_certified: torch.Tensor | None = None
+
+
+@dataclass(frozen=True)
+class LocalValueSystem:
+    """Reusable selected-support conditional for independent zero-start solves.
+
+    The object deliberately caches construction and the default preconditioner,
+    but never caches a solve.  A tolerance sweep can therefore reuse exactly
+    the same geometry, factor, operator, observations, and preconditioner while
+    keeping every CG trajectory independent and zero-started.
+
+    The dataclass is frozen, but PyTorch tensors are not deeply immutable.
+    Solvers do not modify this state; callers must likewise avoid in-place
+    mutation while reusing it.
+    """
+
+    geometry: LocalGeometry
+    function_cholesky: torch.Tensor
+    function_system_matrix: torch.Tensor
+    function_jitter_requested: float
+    function_jitter_used: float
+    function_jitter_attempts: int
+    operator: OrthonormalReducedOperator | None
+    preconditioner: ReducedKroneckerPreconditioner | None
+    conditional_cross: torch.Tensor
+    function_weights: torch.Tensor
+    conditional_value_variance: torch.Tensor
+    value_condition: torch.Tensor
+    orthonormal_observations: torch.Tensor
+    base_mean: torch.Tensor
+    conditional_observation_functional: torch.Tensor
+    operator_eigenvalue_lower_bound: float
+    operator_lower_bound_provenance: str
+    operator_norm_upper_bound: float | None
+    operator_norm_upper_bound_provenance: str
+
+    @property
+    def rhs(self) -> torch.Tensor:
+        """Alias for the represented reduced-system right-hand side."""
+
+        return self.conditional_cross
+
+
+@dataclass(frozen=True)
+class _CholeskyWithJitter:
+    factor: torch.Tensor
+    system_matrix: torch.Tensor
+    jitter_used: float
+    attempts: int
 
 
 def _scaled_difference(
@@ -108,14 +166,40 @@ def _cholesky_with_jitter(
     initial_jitter: float,
     maximum_jitter: float = 1e-1,
 ) -> torch.Tensor:
+    """Compatibility wrapper returning only the accepted Cholesky factor."""
+
+    return _cholesky_with_jitter_details(
+        matrix,
+        initial_jitter=initial_jitter,
+        maximum_jitter=maximum_jitter,
+    ).factor
+
+
+def _cholesky_with_jitter_details(
+    matrix: torch.Tensor,
+    *,
+    initial_jitter: float,
+    maximum_jitter: float = 1e-1,
+) -> _CholeskyWithJitter:
+    """Factor a matrix and retain the source-dtype jitter actually accepted."""
+
     if initial_jitter < 0.0:
         raise ValueError("initial_jitter must be non-negative")
     identity = torch.eye(matrix.shape[0], device=matrix.device, dtype=matrix.dtype)
     jitter = initial_jitter
+    attempts = 0
     while jitter <= maximum_jitter:
-        factor, info = torch.linalg.cholesky_ex(matrix + jitter * identity)
+        attempts += 1
+        source_jitter = matrix.new_tensor(jitter)
+        system_matrix = matrix + source_jitter * identity
+        factor, info = torch.linalg.cholesky_ex(system_matrix)
         if int(info.max()) == 0:
-            return factor
+            return _CholeskyWithJitter(
+                factor=factor,
+                system_matrix=system_matrix,
+                jitter_used=float(source_jitter),
+                attempts=attempts,
+            )
         jitter = torch.finfo(matrix.dtype).eps if jitter == 0.0 else jitter * 10.0
     raise RuntimeError(f"Cholesky failed through jitter={maximum_jitter}")
 
@@ -148,6 +232,418 @@ def _projected_noise_gram(
     return 0.5 * (result + result.T)
 
 
+def _require_finite_nonnegative_scalar(value: torch.Tensor, name: str) -> None:
+    if value.numel() != 1 or not bool(torch.isfinite(value).item()) or float(value) < 0.0:
+        raise ValueError(f"{name} must be a finite non-negative scalar")
+
+
+def _trusted_operator_lower_bound(
+    geometry: LocalGeometry,
+    lengthscale: torch.Tensor,
+    gradient_noise: torch.Tensor,
+    gradient_noise_model: str,
+    reduced_jitter: float,
+) -> tuple[float, str]:
+    """Return the builder-specific represented-system noise lower bound.
+
+    This uses the known relationship between raw and scaled differences; it is
+    not a claim available to an arbitrarily constructed reduced operator.
+    Values are evaluated in the source dtype without directed rounding.
+    """
+
+    minimum_lengthscale2 = lengthscale.square().min()
+    if gradient_noise_model == "iid":
+        gradient_component = gradient_noise * minimum_lengthscale2
+        noise_provenance = "gradient_noise*min(lengthscale^2)"
+    elif gradient_noise_model == "scaled":
+        gradient_component = gradient_noise * minimum_lengthscale2.square()
+        noise_provenance = "gradient_noise*min(lengthscale^4)"
+    elif gradient_noise_model == "metric_matched":
+        gradient_component = gradient_noise
+        noise_provenance = "gradient_noise"
+    else:  # Kept fail-closed even though _projected_noise_gram also validates.
+        raise ValueError(f"unknown gradient noise model: {gradient_noise_model}")
+
+    q_jitter = geometry.eigenvalues.new_tensor(reduced_jitter)
+    q_jitter_component = q_jitter / geometry.eigenvalues.max()
+    lower_bound = float(gradient_component + q_jitter_component)
+    provenance = (
+        f"trusted_gp_builder:{noise_provenance}+"
+        "reduced_jitter/max_scaled_difference_eigenvalue;"
+        "source_dtype_not_directed_rounding"
+    )
+    return lower_bound, provenance
+
+
+def _trusted_operator_norm_upper_bound(
+    operator: OrthonormalReducedOperator,
+    *,
+    function_covariance_floor: torch.Tensor,
+) -> tuple[float | None, str]:
+    """Bound the represented operator without materializing its dense matrix.
+
+    The block-row and Frobenius triangle inequalities are generic.  Bounding
+    ``K_ff^-1`` by the positive value-noise-plus-jitter floor additionally uses
+    the trusted builder's positive-semidefinite kernel assumption.
+    """
+
+    floor = float(function_covariance_floor)
+    provenance = (
+        "trusted_gp_builder:block_row_plus_q_frobenius_over_function_floor;"
+        "source_dtype_not_directed_rounding"
+    )
+    if not math.isfinite(floor) or floor <= 0.0:
+        return None, provenance + ";unavailable_nonpositive_function_floor"
+
+    coordinate_gram = operator.coordinates @ operator.coordinates.T
+    coordinate_diagonal = torch.diagonal(coordinate_gram)
+    pair_distance2 = (
+        coordinate_diagonal[:, None] + coordinate_diagonal[None, :] - 2.0 * coordinate_gram
+    ).clamp_min(0.0)
+    block_norms = operator.alpha.abs() + operator.beta.abs() * pair_distance2
+    unconditional_bound = block_norms.sum(dim=1).max()
+    unconditional_bound = unconditional_bound + torch.linalg.norm(
+        operator.gradient_noise,
+        ord="fro",
+    )
+    q_frobenius_squared = (operator.alpha.square() * pair_distance2).sum()
+    bound = unconditional_bound + q_frobenius_squared / function_covariance_floor
+    bound = bound + abs(operator.jitter)
+    result = float(bound)
+    if not math.isfinite(result) or result <= 0.0:
+        return None, provenance + ";unavailable_nonpositive_or_nonfinite_result"
+    return result, provenance
+
+
+def build_local_value_system(
+    x_condition: torch.Tensor,
+    value_condition: torch.Tensor,
+    gradient_condition: torch.Tensor,
+    x_target: torch.Tensor,
+    *,
+    lengthscale: torch.Tensor,
+    outputscale: float | torch.Tensor,
+    value_noise_variance: float | torch.Tensor,
+    gradient_noise_variance: float | torch.Tensor,
+    kernel: str,
+    gradient_noise_model: str = "iid",
+    rank: int | None = None,
+    relative_rank_tolerance: float | None = None,
+    rank_epsilon: float | torch.Tensor | None = None,
+    function_jitter: float = 1e-8,
+    reduced_jitter: float = 1e-8,
+    build_preconditioner: bool = True,
+) -> LocalValueSystem:
+    """Build one local represented system for reuse across CG tolerances."""
+
+    if x_condition.ndim != 2:
+        raise ValueError("x_condition must have shape (m, d)")
+    if x_target.shape != (1, x_condition.shape[1]):
+        raise ValueError("x_target must have shape (1, d)")
+    m, dimension = x_condition.shape
+    if value_condition.shape != (m,) or gradient_condition.shape != (m, dimension):
+        raise ValueError("conditioning observation shapes do not match x_condition")
+    value_condition_snapshot = value_condition.clone()
+
+    device, dtype = x_condition.device, x_condition.dtype
+    lengthscale = torch.as_tensor(lengthscale, device=device, dtype=dtype).reshape(-1)
+    if lengthscale.numel() not in (1, dimension) or not bool(
+        torch.isfinite(lengthscale).all().item()
+    ):
+        raise ValueError("lengthscale must be one finite scalar or one value per dimension")
+    if bool((lengthscale <= 0.0).any().item()):
+        raise ValueError("lengthscale must be positive")
+    outputscale = torch.as_tensor(outputscale, device=device, dtype=dtype)
+    value_noise = torch.as_tensor(value_noise_variance, device=device, dtype=dtype)
+    gradient_noise = torch.as_tensor(gradient_noise_variance, device=device, dtype=dtype)
+    _require_finite_nonnegative_scalar(outputscale, "outputscale")
+    _require_finite_nonnegative_scalar(value_noise, "value_noise_variance")
+    _require_finite_nonnegative_scalar(gradient_noise, "gradient_noise_variance")
+    if not math.isfinite(function_jitter) or function_jitter < 0.0:
+        raise ValueError("function_jitter must be finite and non-negative")
+    if not math.isfinite(reduced_jitter) or reduced_jitter < 0.0:
+        raise ValueError("reduced_jitter must be finite and non-negative")
+
+    raw_differences = (x_condition - x_target).T.contiguous()
+    if lengthscale.numel() == 1:
+        scaled_differences = raw_differences / lengthscale.reshape(1, 1)
+    else:
+        scaled_differences = raw_differences / lengthscale.reshape(-1, 1)
+    geometry = build_local_geometry_from_differences(
+        scaled_differences,
+        rank=rank,
+        relative_tolerance=relative_rank_tolerance,
+        rank_epsilon=rank_epsilon,
+    )
+    # Kernel coefficients continue to use the full geometry in approximate-rank
+    # mode; only the represented observation basis is truncated.
+    gram = scaled_differences.T @ scaled_differences
+
+    function_covariance = _function_covariance(
+        x_condition,
+        x_condition,
+        lengthscale,
+        outputscale,
+        kernel,
+    )
+    function_covariance = 0.5 * (function_covariance + function_covariance.T)
+    function_covariance = function_covariance + value_noise * torch.eye(
+        m,
+        device=device,
+        dtype=dtype,
+    )
+    factorization = _cholesky_with_jitter_details(
+        function_covariance,
+        initial_jitter=function_jitter,
+    )
+    function_cholesky = factorization.factor
+    target_function_covariance = _function_covariance(
+        x_condition,
+        x_target,
+        lengthscale,
+        outputscale,
+        kernel,
+    ).squeeze(1)
+    function_weights = torch.cholesky_solve(
+        target_function_covariance.unsqueeze(1),
+        function_cholesky,
+    ).squeeze(1)
+    conditional_value_variance = outputscale - torch.dot(
+        target_function_covariance,
+        function_weights,
+    )
+    base_mean = torch.dot(function_weights, value_condition_snapshot)
+
+    if geometry.rank == 0:
+        empty = x_condition.new_empty((0,))
+        return LocalValueSystem(
+            geometry=geometry,
+            function_cholesky=function_cholesky,
+            function_system_matrix=factorization.system_matrix,
+            function_jitter_requested=function_jitter,
+            function_jitter_used=factorization.jitter_used,
+            function_jitter_attempts=factorization.attempts,
+            operator=None,
+            preconditioner=None,
+            conditional_cross=empty,
+            function_weights=function_weights,
+            conditional_value_variance=conditional_value_variance,
+            value_condition=value_condition_snapshot,
+            orthonormal_observations=empty.clone(),
+            base_mean=base_mean,
+            conditional_observation_functional=empty.clone(),
+            operator_eigenvalue_lower_bound=math.inf,
+            operator_lower_bound_provenance="rank_zero_no_reduced_system",
+            operator_norm_upper_bound=0.0,
+            operator_norm_upper_bound_provenance="rank_zero_no_reduced_system",
+        )
+
+    diagonal = torch.diagonal(gram)
+    pair_distance2 = diagonal[:, None] + diagonal[None, :] - 2.0 * gram
+    pair_alpha, pair_beta = _gradient_scalars(
+        pair_distance2.clamp_min(0.0),
+        outputscale,
+        kernel,
+    )
+    target_alpha, _ = _gradient_scalars(diagonal, outputscale, kernel)
+
+    noise_gram = _projected_noise_gram(
+        raw_differences,
+        lengthscale,
+        gradient_noise_model,
+    )
+    orthonormal_noise = geometry.q_to_z.T @ noise_gram @ geometry.q_to_z
+    orthonormal_noise = gradient_noise * orthonormal_noise
+    # TERA's q-coordinate epsilon transforms to epsilon T.T T in z coordinates.
+    orthonormal_noise = orthonormal_noise + reduced_jitter * (geometry.q_to_z.T @ geometry.q_to_z)
+    operator = OrthonormalReducedOperator(
+        geometry.coordinates,
+        pair_alpha,
+        pair_beta,
+        function_cholesky,
+        orthonormal_noise,
+        jitter=0.0,
+    )
+    conditional_cross = operator.conditional_cross(target_alpha, function_weights)
+    preconditioner = ReducedKroneckerPreconditioner(operator) if build_preconditioner else None
+
+    projected_observations = gradient_condition @ raw_differences
+    orthonormal_observations = (projected_observations @ geometry.q_to_z).reshape(-1)
+    value_observation_weights = torch.cholesky_solve(
+        value_condition_snapshot.unsqueeze(1),
+        function_cholesky,
+    ).squeeze(1)
+    conditional_observation_functional = orthonormal_observations - operator.q_matmul(
+        value_observation_weights
+    )
+    lower_bound, lower_provenance = _trusted_operator_lower_bound(
+        geometry,
+        lengthscale,
+        gradient_noise,
+        gradient_noise_model,
+        reduced_jitter,
+    )
+    function_covariance_floor = value_noise + value_noise.new_tensor(factorization.jitter_used)
+    upper_bound, upper_provenance = _trusted_operator_norm_upper_bound(
+        operator,
+        function_covariance_floor=function_covariance_floor,
+    )
+    return LocalValueSystem(
+        geometry=geometry,
+        function_cholesky=function_cholesky,
+        function_system_matrix=factorization.system_matrix,
+        function_jitter_requested=function_jitter,
+        function_jitter_used=factorization.jitter_used,
+        function_jitter_attempts=factorization.attempts,
+        operator=operator,
+        preconditioner=preconditioner,
+        conditional_cross=conditional_cross,
+        function_weights=function_weights,
+        conditional_value_variance=conditional_value_variance,
+        value_condition=value_condition_snapshot,
+        orthonormal_observations=orthonormal_observations,
+        base_mean=base_mean,
+        conditional_observation_functional=conditional_observation_functional,
+        operator_eigenvalue_lower_bound=lower_bound,
+        operator_lower_bound_provenance=lower_provenance,
+        operator_norm_upper_bound=upper_bound,
+        operator_norm_upper_bound_provenance=upper_provenance,
+    )
+
+
+def solve_local_value_system(
+    system: LocalValueSystem,
+    *,
+    tolerance: float = 1e-6,
+    max_iterations: int | None = None,
+    use_preconditioner: bool = True,
+    preconditioner: Callable[[torch.Tensor], torch.Tensor] | None = None,
+) -> LocalPrediction:
+    """Run one independent zero-start solve against a reusable local system."""
+
+    if not math.isfinite(tolerance) or tolerance <= 0.0:
+        raise ValueError("tolerance must be finite and positive")
+    if max_iterations is not None and max_iterations <= 0:
+        raise ValueError("max_iterations must be positive")
+    if not use_preconditioner and preconditioner is not None:
+        raise ValueError("preconditioner requires use_preconditioner=True")
+
+    if system.geometry.rank == 0:
+        empty = system.conditional_cross.clone()
+        solve = CGResult(
+            solution=empty.clone(),
+            residual=empty.clone(),
+            iterations=0,
+            operator_matvecs=0,
+            preconditioner_applications=0,
+            relative_residual=0.0,
+            residual_norm=0.0,
+            rhs_norm=0.0,
+            converged=True,
+            recursive_residual=empty.clone(),
+            recursive_relative_residual=0.0,
+            recursive_residual_norm=0.0,
+            operator_action=empty.clone(),
+            requested_tolerance=tolerance,
+            max_iterations=0 if max_iterations is None else max_iterations,
+            termination_reason="zero_rhs",
+            residual_is_fresh=True,
+            fresh_check_count=0,
+            residual_replacement_count=0,
+            operator_norm_upper_bound=0.0,
+        )
+        zero = system.base_mean.new_zeros(())
+        certificate = PosteriorCertificate(
+            variance_error_upper_bound=0.0,
+            expected_kl_upper_bound=0.0,
+            operator_eigenvalue_lower_bound=math.inf,
+            exact_arithmetic_certified=system.geometry.is_exact,
+            solve_certified=True,
+            basis_is_exact=system.geometry.is_exact,
+            floating_point_rigorous=False,
+            mean_error_upper_bound=0.0,
+            conditional_observation_norm=0.0,
+            mean_solve_certified=True,
+            operator_lower_bound_provenance=system.operator_lower_bound_provenance,
+        )
+        return LocalPrediction(
+            mean=system.base_mean,
+            functional_mean=system.base_mean,
+            mean_reassociation_delta=zero,
+            variance=system.conditional_value_variance,
+            rank=0,
+            basis_is_exact=system.geometry.is_exact,
+            finite_precision_variance_correction=zero,
+            solve=solve,
+            certificate=certificate,
+        )
+
+    if system.operator is None:
+        raise ValueError("nonzero-rank LocalValueSystem must contain an operator")
+    selected_preconditioner: Callable[[torch.Tensor], torch.Tensor] | None = None
+    if use_preconditioner:
+        selected_preconditioner = (
+            preconditioner if preconditioner is not None else system.preconditioner
+        )
+        if selected_preconditioner is None:
+            raise ValueError(
+                "system has no cached preconditioner; supply one explicitly or rebuild "
+                "with build_preconditioner=True"
+            )
+    solve = solve_reduced_cg(
+        system.operator,
+        system.conditional_cross,
+        tolerance=tolerance,
+        max_iterations=max_iterations,
+        preconditioner=selected_preconditioner,
+        operator_norm_upper_bound=system.operator_norm_upper_bound,
+    )
+
+    q_t_weights = system.operator.q_t_matmul(solve.solution)
+    corrected_function_weights = system.function_weights - torch.cholesky_solve(
+        q_t_weights.unsqueeze(1),
+        system.function_cholesky,
+    ).squeeze(1)
+    mean = torch.dot(corrected_function_weights, system.value_condition)
+    mean = mean + torch.dot(solve.solution, system.orthonormal_observations)
+    functional_mean = system.base_mean + torch.dot(
+        solve.solution,
+        system.conditional_observation_functional,
+    )
+    mean_reassociation_delta = mean - functional_mean
+
+    variance_correction = -torch.dot(solve.solution, solve.residual)
+    variance = system.conditional_value_variance - torch.dot(
+        solve.solution,
+        system.conditional_cross,
+    )
+    variance = variance + variance_correction
+    conditional_observation_norm = float(
+        torch.linalg.norm(system.conditional_observation_functional)
+    )
+    certificate = compute_posterior_certificate(
+        system.operator,
+        solve,
+        variance,
+        basis_is_exact=system.geometry.is_exact,
+        conditional_observation_norm=conditional_observation_norm,
+        operator_eigenvalue_lower_bound=system.operator_eigenvalue_lower_bound,
+        operator_lower_bound_provenance=system.operator_lower_bound_provenance,
+        rhs=system.conditional_cross,
+    )
+    return LocalPrediction(
+        mean=mean,
+        functional_mean=functional_mean,
+        mean_reassociation_delta=mean_reassociation_delta,
+        variance=variance,
+        rank=system.geometry.rank,
+        basis_is_exact=system.geometry.is_exact,
+        finite_precision_variance_correction=variance_correction,
+        solve=solve,
+        certificate=certificate,
+    )
+
+
 def predict_local_value(
     x_condition: torch.Tensor,
     value_condition: torch.Tensor,
@@ -169,171 +665,31 @@ def predict_local_value(
     function_jitter: float = 1e-8,
     reduced_jitter: float = 1e-8,
 ) -> LocalPrediction:
-    """Evaluate one target conditional from fixed local observations."""
+    """Build and solve one target conditional with the historical interface."""
 
-    if x_target.shape != (1, x_condition.shape[1]):
-        raise ValueError("x_target must have shape (1, d)")
-    m, dimension = x_condition.shape
-    if value_condition.shape != (m,) or gradient_condition.shape != (m, dimension):
-        raise ValueError("conditioning observation shapes do not match x_condition")
-
-    device, dtype = x_condition.device, x_condition.dtype
-    lengthscale = torch.as_tensor(lengthscale, device=device, dtype=dtype).reshape(-1)
-    outputscale = torch.as_tensor(outputscale, device=device, dtype=dtype)
-    value_noise = torch.as_tensor(value_noise_variance, device=device, dtype=dtype)
-    gradient_noise = torch.as_tensor(gradient_noise_variance, device=device, dtype=dtype)
-
-    raw_differences = (x_condition - x_target).T.contiguous()
-    if lengthscale.numel() == 1:
-        scaled_differences = raw_differences / lengthscale.reshape(1, 1)
-    else:
-        scaled_differences = raw_differences / lengthscale.reshape(-1, 1)
-    geometry = build_local_geometry_from_differences(
-        scaled_differences,
-        rank=rank,
-        relative_tolerance=relative_rank_tolerance,
-        rank_epsilon=rank_epsilon,
-    )
-    # Kernel coefficients must use the full geometry even in the separately
-    # labelled approximate-rank mode.  Reconstructing this Gram matrix from
-    # truncated coordinates would silently change the kernel distances as
-    # well as the projection basis.
-    gram = scaled_differences.T @ scaled_differences
-
-    function_covariance = _function_covariance(
+    system = build_local_value_system(
         x_condition,
-        x_condition,
-        lengthscale,
-        outputscale,
-        kernel,
-    )
-    function_covariance = 0.5 * (function_covariance + function_covariance.T)
-    function_covariance = function_covariance + value_noise * torch.eye(
-        m,
-        device=device,
-        dtype=dtype,
-    )
-    function_cholesky = _cholesky_with_jitter(
-        function_covariance,
-        initial_jitter=function_jitter,
-    )
-    target_function_covariance = _function_covariance(
-        x_condition,
+        value_condition,
+        gradient_condition,
         x_target,
-        lengthscale,
-        outputscale,
-        kernel,
-    ).squeeze(1)
-    function_weights = torch.cholesky_solve(
-        target_function_covariance.unsqueeze(1),
-        function_cholesky,
-    ).squeeze(1)
-    conditional_value_variance = outputscale - torch.dot(
-        target_function_covariance,
-        function_weights,
+        lengthscale=lengthscale,
+        outputscale=outputscale,
+        value_noise_variance=value_noise_variance,
+        gradient_noise_variance=gradient_noise_variance,
+        kernel=kernel,
+        gradient_noise_model=gradient_noise_model,
+        rank=rank,
+        relative_rank_tolerance=relative_rank_tolerance,
+        rank_epsilon=rank_epsilon,
+        function_jitter=function_jitter,
+        reduced_jitter=reduced_jitter,
+        build_preconditioner=use_preconditioner,
     )
-
-    if geometry.rank == 0:
-        solve = CGResult(
-            solution=x_condition.new_empty((0,)),
-            residual=x_condition.new_empty((0,)),
-            iterations=0,
-            operator_matvecs=0,
-            preconditioner_applications=0,
-            relative_residual=0.0,
-            residual_norm=0.0,
-            rhs_norm=0.0,
-            converged=True,
-        )
-        certificate = PosteriorCertificate(
-            variance_error_upper_bound=0.0,
-            expected_kl_upper_bound=0.0,
-            operator_eigenvalue_lower_bound=math.inf,
-            exact_arithmetic_certified=geometry.is_exact,
-            solve_certified=True,
-            basis_is_exact=geometry.is_exact,
-            floating_point_rigorous=False,
-        )
-        return LocalPrediction(
-            mean=torch.dot(function_weights, value_condition),
-            variance=conditional_value_variance,
-            rank=0,
-            basis_is_exact=geometry.is_exact,
-            finite_precision_variance_correction=x_condition.new_zeros(()),
-            solve=solve,
-            certificate=certificate,
-        )
-
-    diagonal = torch.diagonal(gram)
-    pair_distance2 = diagonal[:, None] + diagonal[None, :] - 2.0 * gram
-    pair_alpha, pair_beta = _gradient_scalars(
-        pair_distance2.clamp_min(0.0),
-        outputscale,
-        kernel,
-    )
-    target_alpha, _ = _gradient_scalars(diagonal, outputscale, kernel)
-
-    noise_gram = _projected_noise_gram(
-        raw_differences,
-        lengthscale,
-        gradient_noise_model,
-    )
-    orthonormal_noise = geometry.q_to_z.T @ noise_gram @ geometry.q_to_z
-    orthonormal_noise = gradient_noise * orthonormal_noise
-    # TERA regularizes in its nonorthogonal q coordinates.  Under
-    # z = q @ q_to_z, epsilon I_q becomes epsilon q_to_z.T q_to_z.
-    orthonormal_noise = orthonormal_noise + reduced_jitter * (geometry.q_to_z.T @ geometry.q_to_z)
-
-    operator = OrthonormalReducedOperator(
-        geometry.coordinates,
-        pair_alpha,
-        pair_beta,
-        function_cholesky,
-        orthonormal_noise,
-        jitter=0.0,
-    )
-    conditional_cross = operator.conditional_cross(target_alpha, function_weights)
-    preconditioner = ReducedKroneckerPreconditioner(operator) if use_preconditioner else None
-    solve = solve_reduced_cg(
-        operator,
-        conditional_cross,
+    return solve_local_value_system(
+        system,
         tolerance=cg_tolerance,
         max_iterations=cg_max_iterations,
-        preconditioner=preconditioner,
-    )
-
-    projected_observations = gradient_condition @ raw_differences
-    orthonormal_observations = projected_observations @ geometry.q_to_z
-    q_t_weights = operator.q_t_matmul(solve.solution)
-    corrected_function_weights = function_weights - torch.cholesky_solve(
-        q_t_weights.unsqueeze(1),
-        function_cholesky,
-    ).squeeze(1)
-    mean = torch.dot(corrected_function_weights, value_condition)
-    mean = mean + torch.dot(solve.solution, orthonormal_observations.reshape(-1))
-
-    # In exact arithmetic this energy form is conservative for any stored
-    # iterate: v(w)-v(w*) = ||w-w*||_K^2.  It removes dependence on exact
-    # Galerkin orthogonality, although the evaluated scalar remains subject to
-    # ordinary floating-point roundoff.  For an ideal Galerkin iterate the
-    # correction is zero.
-    variance_correction = -torch.dot(solve.solution, solve.residual)
-    variance = conditional_value_variance - torch.dot(solve.solution, conditional_cross)
-    variance = variance + variance_correction
-    certificate = compute_posterior_certificate(
-        operator,
-        solve,
-        variance,
-        basis_is_exact=geometry.is_exact,
-    )
-    return LocalPrediction(
-        mean=mean,
-        variance=variance,
-        rank=geometry.rank,
-        basis_is_exact=geometry.is_exact,
-        finite_precision_variance_correction=variance_correction,
-        solve=solve,
-        certificate=certificate,
+        use_preconditioner=use_preconditioner,
     )
 
 
@@ -437,6 +793,10 @@ def predict_marginal_values(
 
     return MarginalPredictions(
         mean=torch.stack([prediction.mean for prediction in predictions]),
+        functional_mean=torch.stack([prediction.functional_mean for prediction in predictions]),
+        mean_reassociation_deltas=torch.stack(
+            [prediction.mean_reassociation_delta for prediction in predictions]
+        ),
         variance=torch.stack([prediction.variance for prediction in predictions]),
         ranks=torch.tensor([prediction.rank for prediction in predictions], device=x_train.device),
         iterations=torch.tensor(
@@ -464,6 +824,20 @@ def predict_marginal_values(
             [prediction.certificate.variance_error_upper_bound for prediction in predictions],
             device=x_train.device,
             dtype=x_train.dtype,
+        ),
+        mean_error_upper_bounds=torch.tensor(
+            [prediction.certificate.mean_error_upper_bound for prediction in predictions],
+            device=x_train.device,
+            dtype=x_train.dtype,
+        ),
+        conditional_observation_norms=torch.tensor(
+            [prediction.certificate.conditional_observation_norm for prediction in predictions],
+            device=x_train.device,
+            dtype=x_train.dtype,
+        ),
+        mean_solve_certified=torch.tensor(
+            [prediction.certificate.mean_solve_certified for prediction in predictions],
+            device=x_train.device,
         ),
         expected_kl_upper_bounds=torch.tensor(
             [prediction.certificate.expected_kl_upper_bound for prediction in predictions],

@@ -266,11 +266,13 @@ class OrthonormalReducedOperator:
 
     @property
     def eigenvalue_lower_bound(self) -> float:
-        """Return a conservative lower bound for the jittered operator.
+        """Return the noise floor conditional on a PSD signal Schur complement.
 
-        The signal part is a Gaussian conditional covariance and therefore
-        positive semidefinite.  Projected observation noise and the explicit
-        coordinate jitter are the only generally available strict lower bound.
+        This is appropriate for operators assembled by the trusted GP builder,
+        but the class cannot prove that arbitrary caller-supplied ``alpha``,
+        ``beta``, and factors describe a positive-semidefinite GP covariance.
+        The builder therefore supplies its own analytic bound and provenance to
+        production certificates.
         """
 
         minimum_noise = torch.linalg.eigvalsh(self.gradient_noise).min()
@@ -278,7 +280,7 @@ class OrthonormalReducedOperator:
         tolerance = 100.0 * torch.finfo(self.gradient_noise.dtype).eps * numerical_scale
         if float(minimum_noise) < -float(tolerance):
             raise ValueError("gradient_noise must be positive semidefinite")
-        return max(0.0, float(minimum_noise)) + self.jitter
+        return max(0.0, float(minimum_noise) + self.jitter)
 
     def _matrix(self, value: torch.Tensor) -> torch.Tensor:
         if value.numel() != self.size:
@@ -389,6 +391,14 @@ class ReducedKroneckerPreconditioner:
 
 @dataclass(frozen=True)
 class CGResult:
+    """One zero-start CG solve with auditable stopping evidence.
+
+    The historical ``residual`` fields remain the residual recomputed from a
+    fresh operator application at return.  ``recursive_residual`` records the
+    recurrence state that led to that fresh check and must not be substituted
+    for ``residual`` in posterior certificates.
+    """
+
     solution: torch.Tensor
     residual: torch.Tensor
     iterations: int
@@ -398,6 +408,35 @@ class CGResult:
     residual_norm: float
     rhs_norm: float
     converged: bool
+    recursive_residual: torch.Tensor | None = None
+    recursive_relative_residual: float | None = None
+    recursive_residual_norm: float | None = None
+    operator_action: torch.Tensor | None = None
+    requested_tolerance: float | None = None
+    max_iterations: int | None = None
+    termination_reason: str = "legacy_unspecified"
+    residual_is_fresh: bool = False
+    fresh_check_count: int = 0
+    residual_replacement_count: int = 0
+    operator_norm_upper_bound: float | None = None
+
+    @property
+    def fresh_residual(self) -> torch.Tensor:
+        """Alias documenting that ``residual`` is freshly recomputed."""
+
+        return self.residual
+
+    @property
+    def fresh_relative_residual(self) -> float:
+        """Alias documenting that ``relative_residual`` is fresh."""
+
+        return self.relative_residual
+
+    @property
+    def fresh_residual_norm(self) -> float:
+        """Alias documenting that ``residual_norm`` is fresh."""
+
+        return self.residual_norm
 
 
 @dataclass(frozen=True)
@@ -425,6 +464,11 @@ class PosteriorCertificate:
     solve_certified: bool
     basis_is_exact: bool
     floating_point_rigorous: bool
+    mean_error_upper_bound: float = math.inf
+    conditional_observation_norm: float = math.inf
+    mean_solve_certified: bool = False
+    bound_scope: str = "selected_support_represented_system"
+    operator_lower_bound_provenance: str = "operator_noise_eigvalsh"
 
 
 def _cg_result(
@@ -434,17 +478,28 @@ def _cg_result(
     iterations: int,
     tolerance: float,
     *,
+    recursive_residual: torch.Tensor,
+    max_iterations: int,
+    termination_reason: str,
     operator_matvecs: int,
     preconditioner_applications: int,
+    fresh_check_count: int,
+    residual_replacement_count: int,
+    operator_norm_upper_bound: float | None,
 ) -> CGResult:
     """Build a result from a recomputed, rather than recursive, residual."""
 
-    true_residual = rhs - operator.matmul(solution)
+    operator_action = operator.matmul(solution)
+    true_residual = rhs - operator_action
     operator_matvecs += 1
+    fresh_check_count += 1
     rhs_norm = float(torch.linalg.norm(rhs))
     residual_norm = float(torch.linalg.norm(true_residual))
+    recursive_residual_norm = float(torch.linalg.norm(recursive_residual))
     relative_residual = residual_norm / rhs_norm if rhs_norm else 0.0
+    recursive_relative_residual = recursive_residual_norm / rhs_norm if rhs_norm else 0.0
     finite = math.isfinite(relative_residual)
+    converged = finite and relative_residual <= tolerance
     return CGResult(
         solution=solution,
         residual=true_residual,
@@ -454,7 +509,18 @@ def _cg_result(
         relative_residual=relative_residual,
         residual_norm=residual_norm,
         rhs_norm=rhs_norm,
-        converged=finite and relative_residual <= tolerance,
+        converged=converged,
+        recursive_residual=recursive_residual,
+        recursive_relative_residual=recursive_relative_residual,
+        recursive_residual_norm=recursive_residual_norm,
+        operator_action=operator_action,
+        requested_tolerance=tolerance,
+        max_iterations=max_iterations,
+        termination_reason=("converged_fresh_residual" if converged else termination_reason),
+        residual_is_fresh=True,
+        fresh_check_count=fresh_check_count,
+        residual_replacement_count=residual_replacement_count,
+        operator_norm_upper_bound=operator_norm_upper_bound,
     )
 
 
@@ -464,6 +530,10 @@ def compute_posterior_certificate(
     conservative_variance: torch.Tensor | float,
     *,
     basis_is_exact: bool = True,
+    conditional_observation_norm: float | None = None,
+    operator_eigenvalue_lower_bound: float | None = None,
+    operator_lower_bound_provenance: str = "operator_noise_eigvalsh",
+    rhs: torch.Tensor | None = None,
 ) -> PosteriorCertificate:
     """Certify scalar-posterior solve error from the recomputed residual.
 
@@ -476,7 +546,58 @@ def compute_posterior_certificate(
     not a directed-rounding or interval certificate.
     """
 
-    lower_bound = operator.eigenvalue_lower_bound
+    lower_bound = (
+        operator.eigenvalue_lower_bound
+        if operator_eigenvalue_lower_bound is None
+        else operator_eigenvalue_lower_bound
+    )
+    if not math.isfinite(lower_bound) or lower_bound < 0.0:
+        raise ValueError("operator_eigenvalue_lower_bound must be finite and non-negative")
+    if conditional_observation_norm is not None and (
+        not math.isfinite(conditional_observation_norm) or conditional_observation_norm < 0.0
+    ):
+        raise ValueError("conditional_observation_norm must be finite and non-negative")
+    reported_observation_norm = (
+        math.inf if conditional_observation_norm is None else conditional_observation_norm
+    )
+    residual_norm = float(torch.linalg.norm(solve.residual))
+    action = solve.operator_action
+    has_fresh_residual_evidence = (
+        solve.residual_is_fresh
+        and action is not None
+        and action.shape == solve.residual.shape
+        and action.numel() == solve.solution.numel()
+        and bool(torch.isfinite(action).all().item())
+        and math.isfinite(residual_norm)
+    )
+    if rhs is not None:
+        if rhs.shape != solve.residual.shape:
+            raise ValueError("rhs shape must match the solve residual")
+        residual_matches_action = action is not None and torch.equal(
+            solve.residual,
+            rhs - action,
+        )
+        has_fresh_residual_evidence = has_fresh_residual_evidence and residual_matches_action
+    if not has_fresh_residual_evidence:
+        return PosteriorCertificate(
+            variance_error_upper_bound=math.inf,
+            expected_kl_upper_bound=math.inf,
+            operator_eigenvalue_lower_bound=lower_bound,
+            exact_arithmetic_certified=False,
+            solve_certified=False,
+            basis_is_exact=basis_is_exact,
+            floating_point_rigorous=False,
+            mean_error_upper_bound=math.inf,
+            conditional_observation_norm=reported_observation_norm,
+            mean_solve_certified=False,
+            operator_lower_bound_provenance=operator_lower_bound_provenance,
+        )
+    mean_error = (
+        math.inf
+        if conditional_observation_norm is None or lower_bound <= 0.0
+        else conditional_observation_norm * residual_norm / lower_bound
+    )
+    mean_solve_certified = math.isfinite(mean_error)
     variance = float(torch.as_tensor(conservative_variance))
     if lower_bound <= 0.0 or not math.isfinite(variance) or variance <= 0.0:
         return PosteriorCertificate(
@@ -487,9 +608,13 @@ def compute_posterior_certificate(
             solve_certified=False,
             basis_is_exact=basis_is_exact,
             floating_point_rigorous=False,
+            mean_error_upper_bound=mean_error,
+            conditional_observation_norm=reported_observation_norm,
+            mean_solve_certified=mean_solve_certified,
+            operator_lower_bound_provenance=operator_lower_bound_provenance,
         )
 
-    variance_error = solve.residual_norm**2 / lower_bound
+    variance_error = residual_norm**2 / lower_bound
     if not math.isfinite(variance_error) or variance_error >= variance:
         return PosteriorCertificate(
             variance_error_upper_bound=variance_error,
@@ -499,6 +624,10 @@ def compute_posterior_certificate(
             solve_certified=False,
             basis_is_exact=basis_is_exact,
             floating_point_rigorous=False,
+            mean_error_upper_bound=mean_error,
+            conditional_observation_norm=reported_observation_norm,
+            mean_solve_certified=mean_solve_certified,
+            operator_lower_bound_provenance=operator_lower_bound_provenance,
         )
 
     expected_kl = 0.5 * math.log(variance / (variance - variance_error))
@@ -510,6 +639,10 @@ def compute_posterior_certificate(
         solve_certified=True,
         basis_is_exact=basis_is_exact,
         floating_point_rigorous=False,
+        mean_error_upper_bound=mean_error,
+        conditional_observation_norm=reported_observation_norm,
+        mean_solve_certified=mean_solve_certified,
+        operator_lower_bound_provenance=operator_lower_bound_provenance,
     )
 
 
@@ -520,25 +653,35 @@ def solve_reduced_cg(
     tolerance: float = 1e-6,
     max_iterations: int | None = None,
     preconditioner: Callable[[torch.Tensor], torch.Tensor] | None = None,
+    operator_norm_upper_bound: float | None = None,
 ) -> CGResult:
     """Solve one reduced conditional system with (preconditioned) CG."""
 
     if rhs.ndim != 1 or rhs.numel() != operator.size:
         raise ValueError(f"rhs must have shape ({operator.size},)")
-    if tolerance <= 0.0:
-        raise ValueError("tolerance must be positive")
+    if not math.isfinite(tolerance) or tolerance <= 0.0:
+        raise ValueError("tolerance must be finite and positive")
     if max_iterations is None:
         max_iterations = operator.size
     if max_iterations <= 0:
         raise ValueError("max_iterations must be positive")
+    if operator_norm_upper_bound is not None and (
+        not math.isfinite(operator_norm_upper_bound) or operator_norm_upper_bound <= 0.0
+    ):
+        raise ValueError("operator_norm_upper_bound must be finite and positive when supplied")
 
     solution = torch.zeros_like(rhs)
     residual = rhs.clone()
     rhs_norm = torch.linalg.norm(rhs)
+    operator_matvecs = 0
+    preconditioner_applications = 0
+    fresh_check_count = 0
+    residual_replacement_count = 0
     if float(rhs_norm) == 0.0:
+        zero = rhs.clone()
         return CGResult(
             solution=solution,
-            residual=rhs.clone(),
+            residual=zero,
             iterations=0,
             operator_matvecs=0,
             preconditioner_applications=0,
@@ -546,10 +689,19 @@ def solve_reduced_cg(
             residual_norm=0.0,
             rhs_norm=0.0,
             converged=True,
+            recursive_residual=zero.clone(),
+            recursive_relative_residual=0.0,
+            recursive_residual_norm=0.0,
+            operator_action=zero.clone(),
+            requested_tolerance=tolerance,
+            max_iterations=max_iterations,
+            termination_reason="zero_rhs",
+            residual_is_fresh=True,
+            fresh_check_count=0,
+            residual_replacement_count=0,
+            operator_norm_upper_bound=operator_norm_upper_bound,
         )
 
-    operator_matvecs = 0
-    preconditioner_applications = 0
     if preconditioner is None:
         z = residual
     else:
@@ -557,6 +709,22 @@ def solve_reduced_cg(
         preconditioner_applications += 1
     direction = z.clone()
     rz = torch.dot(residual, z)
+    if not bool(torch.isfinite(rz).item()) or float(rz) <= 0.0:
+        return _cg_result(
+            operator,
+            rhs,
+            solution,
+            0,
+            tolerance,
+            recursive_residual=residual,
+            max_iterations=max_iterations,
+            termination_reason="nonpositive_or_nonfinite_preconditioned_residual",
+            operator_matvecs=operator_matvecs,
+            preconditioner_applications=preconditioner_applications,
+            fresh_check_count=fresh_check_count,
+            residual_replacement_count=residual_replacement_count,
+            operator_norm_upper_bound=operator_norm_upper_bound,
+        )
     relative_residual = 1.0
     for iteration in range(1, max_iterations + 1):
         image = operator.matmul(direction)
@@ -569,8 +737,14 @@ def solve_reduced_cg(
                 solution,
                 iteration - 1,
                 tolerance,
+                recursive_residual=residual,
+                max_iterations=max_iterations,
+                termination_reason="nonpositive_or_nonfinite_curvature",
                 operator_matvecs=operator_matvecs,
                 preconditioner_applications=preconditioner_applications,
+                fresh_check_count=fresh_check_count,
+                residual_replacement_count=residual_replacement_count,
+                operator_norm_upper_bound=operator_norm_upper_bound,
             )
         step = rz / curvature
         solution = solution + step * direction
@@ -583,19 +757,29 @@ def solve_reduced_cg(
                 solution,
                 iteration,
                 tolerance,
+                recursive_residual=residual,
+                max_iterations=max_iterations,
+                termination_reason="fresh_residual_above_requested_tolerance",
                 operator_matvecs=operator_matvecs,
                 preconditioner_applications=preconditioner_applications,
+                fresh_check_count=fresh_check_count,
+                residual_replacement_count=residual_replacement_count,
+                operator_norm_upper_bound=operator_norm_upper_bound,
             )
             operator_matvecs = checked.operator_matvecs
             preconditioner_applications = checked.preconditioner_applications
-            if checked.converged or iteration == max_iterations:
+            fresh_check_count = checked.fresh_check_count
+            if checked.converged:
                 return checked
+            if iteration == max_iterations:
+                return replace(checked, termination_reason="maximum_iterations")
 
             # Recursive CG residuals can drift just below the stopping
             # threshold while a fresh operator application remains above it.
             # Replace the residual and reliably restart instead of returning a
             # result whose own convergence flag contradicts the stop decision.
             residual = checked.residual
+            residual_replacement_count += 1
             if preconditioner is None:
                 z = residual
             else:
@@ -609,24 +793,53 @@ def solve_reduced_cg(
                 return replace(
                     checked,
                     preconditioner_applications=preconditioner_applications,
+                    termination_reason="nonpositive_or_nonfinite_preconditioned_residual",
+                    residual_replacement_count=residual_replacement_count,
                 )
             direction = z.clone()
             continue
-        if preconditioner is None:
-            next_z = residual
-        else:
-            next_z = preconditioner(residual)
-            preconditioner_applications += 1
-        next_rz = torch.dot(residual, next_z)
-        if not bool(torch.isfinite(next_rz).item()) or math.isclose(float(rz), 0.0):
+        if iteration == max_iterations:
             return _cg_result(
                 operator,
                 rhs,
                 solution,
                 iteration,
                 tolerance,
+                recursive_residual=residual,
+                max_iterations=max_iterations,
+                termination_reason="maximum_iterations",
                 operator_matvecs=operator_matvecs,
                 preconditioner_applications=preconditioner_applications,
+                fresh_check_count=fresh_check_count,
+                residual_replacement_count=residual_replacement_count,
+                operator_norm_upper_bound=operator_norm_upper_bound,
+            )
+        if preconditioner is None:
+            next_z = residual
+        else:
+            next_z = preconditioner(residual)
+            preconditioner_applications += 1
+        next_rz = torch.dot(residual, next_z)
+        next_rz_finite_positive = bool(torch.isfinite(next_rz).item()) and float(next_rz) > 0.0
+        if not next_rz_finite_positive or math.isclose(float(rz), 0.0):
+            return _cg_result(
+                operator,
+                rhs,
+                solution,
+                iteration,
+                tolerance,
+                recursive_residual=residual,
+                max_iterations=max_iterations,
+                termination_reason=(
+                    "nonpositive_or_nonfinite_preconditioned_residual"
+                    if not next_rz_finite_positive
+                    else "nonfinite_or_zero_recurrence"
+                ),
+                operator_matvecs=operator_matvecs,
+                preconditioner_applications=preconditioner_applications,
+                fresh_check_count=fresh_check_count,
+                residual_replacement_count=residual_replacement_count,
+                operator_norm_upper_bound=operator_norm_upper_bound,
             )
         direction = next_z + (next_rz / rz) * direction
         rz = next_rz
@@ -636,6 +849,12 @@ def solve_reduced_cg(
         solution,
         max_iterations,
         tolerance,
+        recursive_residual=residual,
+        max_iterations=max_iterations,
+        termination_reason="maximum_iterations",
         operator_matvecs=operator_matvecs,
         preconditioner_applications=preconditioner_applications,
+        fresh_check_count=fresh_check_count,
+        residual_replacement_count=residual_replacement_count,
+        operator_norm_upper_bound=operator_norm_upper_bound,
     )

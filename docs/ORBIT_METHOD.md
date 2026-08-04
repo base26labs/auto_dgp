@@ -128,6 +128,12 @@ by the separate eigensystems of `A` and `N`.  The radial outer-product term and 
 correction remain in the PCG operator.  Its usefulness is an empirical hypothesis and must be
 ablated.
 
+`build_local_value_system` performs the geometry, function factorization, structured-operator, and
+default-preconditioner setup once.  `solve_local_value_system` then runs an independent zero-start
+CG trajectory for one requested tolerance.  A calibration sweep reuses the same system state
+and preconditioner, but never warm-starts or implicitly caches solutions; the registered production
+tolerance is the corresponding sweep result itself, not a duplicate solve.
+
 ## 3. Anytime conservative posterior and certificate
 
 First condition on the neighbouring values.  Let scalar target `Y` and reduced gradient vector `Z`
@@ -210,18 +216,44 @@ If `Σ ⪰ λ0 I`, then `B=||e||²/λ0` bounds `δS`.  When `B<vS`,
     \le \tfrac12\log\!\left(\frac{v_S}{v_S-B}\right).
 \]
 
-The implementation recomputes the structured residual after PCG rather than certifying from the
-recursive residual, and uses the same residual in the variance correction.  TERA's `εI`
+The implementation persists the final structured action `Σw`, recomputes `e=k-Σw` from that action,
+and keeps it distinct from the recursive CG residual that triggered a check.  It also records the
+requested tolerance, iteration cap, termination reason, number of fresh checks, and number of
+residual replacements.  The fresh residual is the one used in the variance correction and every
+certificate.  TERA's `εI`
 regularizer is transformed from `q` coordinates to
 `ε S_r^-2 = ε(V_rS_r^-1)^T(V_rS_r^-1)` in orthonormal coordinates; adding `εI` directly after the
-basis change would define a different numerical posterior.  The generally available `λ0` is the
-smallest eigenvalue of transformed projected observation noise plus this transformed regularizer.
-With no strict lower bound, ORBIT reports the certificate as unavailable.  The certificate controls
-the PCG solve only.  If positive geometric modes were truncated, it is explicitly marked as not a
-certificate to the exact-rank posterior.  All certificate inequalities are exact-arithmetic results
-for the represented operator; the reported floating-point numbers carry the roundoff qualification
-above.  The bound is observation-averaged; it is not a pointwise KL guarantee for an adversarial
-realised gradient vector.
+basis change would define a different numerical posterior.
+
+The trusted GP builder supplies an analytic represented-system lower bound instead of asking a
+generic operator to infer the model assumptions.  For gradient-noise variance `σg²`, its contribution
+is `σg² min(ℓ²)` for `iid`, `σg² min(ℓ⁴)` for vendor `scaled`, and `σg²` for `metric_matched`; the
+q-jitter contribution is `ε/smax²`, where `smax` is the largest retained singular value of the scaled
+difference matrix.  Their sum is `λ0`.  With no strict lower bound, ORBIT reports the certificate as
+unavailable.  These scalars are evaluated in the source dtype, not with directed rounding.
+
+There is also a realised-observation mean bound.  Let
+
+\[
+    h=z_{obs}-QK_{ff}^{-1}y.
+\]
+
+The represented conditional mean is `μ(w)=μ0+hᵀw` in exact arithmetic, so
+
+\[
+    |\mu(w)-\mu(w_*)| \le \lVert h\rVert_2\lVert e\rVert_2/\lambda_0.
+\]
+
+For compatibility, the serialized canonical mean retains the historical evaluation order
+`(Kff^-1 kf*-Kff^-1 Qᵀw)ᵀy+wᵀz`.  ORBIT separately reports the functional-form mean and their signed
+floating-point reassociation difference `canonical legacy mean - functional mean`; the bound is a
+nominal exact-arithmetic bound for the common represented mean, not an interval enclosure of that
+serialized IEEE result.
+
+Both mean and variance certificates control the iterative solve inside the selected support only.
+If positive geometric modes were truncated, they are explicitly not certificates to the exact-rank
+posterior.  The KL bound is observation-averaged; it is not a pointwise KL guarantee for an
+adversarial realised gradient vector.  All reported bounds retain the roundoff qualification above.
 
 A future IEEE-rigorous implementation need not materialize `Sigma`, but it must obtain verified
 enclosures.  If `||e-e_hat|| <= eta_r`, `|v_hat-v(w)| <= eta_v`, and the lower spectral bound

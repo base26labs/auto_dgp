@@ -18,23 +18,29 @@ from gp.orbit.operator import (
 )
 from gp.orbit.predictor import (
     LocalPrediction,
+    LocalValueSystem,
     MarginalPredictions,
+    build_local_value_system,
     predict_local_value,
     predict_marginal_values,
+    solve_local_value_system,
 )
 
 __all__ = [
     "CGResult",
     "LocalGeometry",
     "LocalPrediction",
+    "LocalValueSystem",
     "MarginalPredictions",
     "OrthonormalReducedOperator",
     "PosteriorCertificate",
     "ReducedKroneckerPreconditioner",
     "build_local_geometry",
     "build_local_geometry_from_differences",
+    "build_local_value_system",
     "compute_posterior_certificate",
     "predict_local_value",
     "predict_marginal_values",
     "solve_reduced_cg",
+    "solve_local_value_system",
 ]
