@@ -3,9 +3,9 @@
 from pathlib import Path
 
 import torch
+
 from experiments.f02_internal_models import TensorConfirmatorySplit
 from experiments.paper_nbody_prism_confirm import CANDIDATE_NAME
-
 from experiments.paper_nbody_prism_n_aggregate import aggregate_results
 from experiments.paper_nbody_prism_n_benchmark import (
     FIXED_DIMENSION,

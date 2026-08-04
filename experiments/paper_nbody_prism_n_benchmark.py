@@ -19,6 +19,7 @@ from typing import Any
 
 import numpy as np
 import torch
+
 from experiments.f02_internal_models import (
     ScalarPrediction,
     TensorConfirmatorySplit,
@@ -56,7 +57,6 @@ from experiments.paper_nbody_prism_confirm import (
     VALUE_RMSE_NONINFERIORITY_MARGIN,
     load_confirmation_data,
 )
-
 from gp.orbit.budgeted import predict_budgeted_guarded_marginals
 
 SCHEMA = "paper_nbody_prism_n_scaling_task_v1"

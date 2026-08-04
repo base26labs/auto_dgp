@@ -9,13 +9,13 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+
 from experiments.paper_nbody_benchmark import _sha256
 from experiments.paper_nbody_prism_confirm import (
     CANDIDATE_NAME,
     DATASET_GENERATION_SEED,
     VALUE_RMSE_NONINFERIORITY_MARGIN,
 )
-
 from experiments.paper_nbody_prism_n_benchmark import (
     FIXED_DIMENSION,
     FIXED_N_PARTICLES,
