@@ -1,5 +1,9 @@
 # F02b numerical calibration matrix
 
+> **Superseded for predictive benchmarking (2026-08-04).** The active evaluation is the
+> [paper-aligned N-body benchmark](PAPER_NBODY_BENCHMARK.md). Do not submit the pending 45-fit or
+> 122-probe F02b arrays. This file is retained only as historical numerical-development context.
+
 Calibration ID: `F02B_NUMERICAL_CALIBRATION_v2`
 
 Status: **PREDECLARED DEVELOPMENT-ONLY DESIGN — not an F02b protocol freeze, not a numerical-gate

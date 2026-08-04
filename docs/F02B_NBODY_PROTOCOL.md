@@ -1,5 +1,9 @@
 # F02b N-body protocol
 
+> **Superseded for predictive benchmarking (2026-08-04).** Use the
+> [paper-aligned N-body benchmark](PAPER_NBODY_BENCHMARK.md). The custom F02b gate design below is
+> historical and does not authorize job submission.
+
 Status: **DRAFT — not preregistered, not executable, and not permission to access any
 confirmatory label.**
 

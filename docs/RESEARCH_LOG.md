@@ -7,6 +7,22 @@ scope downgrades are reported in place, loudly, naming the check that failed.
 
 ---
 
+## 2026-08-04 — Predictive evaluation simplified to the paper benchmark
+
+The active predictive evaluation now follows the DSoftKI paper's toy N-body benchmark: reported
+particle counts `4, 6, 8, 10`; 10,000 generated rows followed by the paper's 5% gradient-norm filter;
+a 90/10 train/test split; three released-script seeds; and per-dataset value/gradient RMSE summarized
+as mean and standard deviation. Shared-node timing is descriptive only and cannot be compared with
+the paper's GPU timing.
+
+The pending custom F02b 45-fit/122-probe calibration workflow is superseded and must not be
+submitted. Its committed artifacts remain as historical numerical diagnostics. Future benchmark
+tests are limited to small data/split and result/metric smoke checks; kernel and ORBIT correctness
+remain covered by their existing unit tests. No Slurm job was submitted or cancelled for this
+change. See `docs/PAPER_NBODY_BENCHMARK.md`.
+
+---
+
 ## 2026-08-04 — Strict F02b 122-slot probe intake: **implemented and locally verified, not run on a cohort**
 
 The task index advanced to v2 before any corpus run so it also binds the actual sorted runtime

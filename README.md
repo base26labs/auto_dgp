@@ -28,6 +28,11 @@ It has passed
 algebraic controls but has **not** yet passed the predictive and matched-resource gates required to
 call it a better GP framework; see [`docs/ORBIT_METHOD.md`](docs/ORBIT_METHOD.md).
 
+Predictive evaluation now uses the compact protocol from the DSoftKI paper's toy N-body experiment:
+four reported particle counts, a 90/10 split, three seeds, and value/gradient RMSE. See
+[`docs/PAPER_NBODY_BENCHMARK.md`](docs/PAPER_NBODY_BENCHMARK.md). The earlier custom F02b calibration
+matrix is retained as numerical-development history and its pending arrays must not be submitted.
+
 Within the substrate, the loop's concrete objective is to beat these on value RMSE **and** calibration
 (NLL) under a fixed budget.
 
