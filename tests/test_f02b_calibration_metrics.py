@@ -9,7 +9,9 @@ import torch
 from experiments.f02b_calibration_metrics import (
     CalibrationMetricInputError,
     cholesky_backward_error_metrics,
+    cholesky_frobenius_backward_error_metrics,
     dense_solve_error_metrics,
+    dense_solve_frobenius_error_metrics,
     matrix_free_solve_error_metrics,
     moment_error_metrics,
     nbody_physical_constraint_residuals,
@@ -64,6 +66,33 @@ def test_dense_solve_error_metrics_report_perturbed_solution_formula():
     assert result["backward_error_denominator"] == pytest.approx(4.0 * solution_norm + rhs_norm)
     assert result["normwise_backward_error"] == pytest.approx(
         residual_norm / (4.0 * solution_norm + rhs_norm)
+    )
+    _assert_strict_json(result)
+
+
+def test_dense_full_q_variant_reports_frobenius_backward_error_without_spectral_label():
+    matrix = torch.diag(torch.tensor([3.0, 4.0], dtype=torch.float64))
+    rhs = torch.tensor([3.0, 8.0], dtype=torch.float64)
+    solution = torch.tensor([1.0, 2.25], dtype=torch.float64)
+
+    result = dense_solve_frobenius_error_metrics(
+        matrix,
+        rhs,
+        solution,
+        residual_compute_dtype=torch.float64,
+    )
+
+    residual_norm = 1.0
+    rhs_norm = math.sqrt(73.0)
+    solution_norm = math.sqrt(1.0 + 2.25**2)
+    assert result["operator_norm_source"] == "dense_matrix_frobenius_norm"
+    assert result["backward_error_matrix_norm"] == "frobenius"
+    assert result["operator_frobenius_norm"] == pytest.approx(5.0)
+    assert "operator_norm_2" not in result
+    assert "dense_operator_spectral_norm" not in result
+    assert result["relative_residual"] == pytest.approx(residual_norm / rhs_norm)
+    assert result["normwise_backward_error"] == pytest.approx(
+        residual_norm / (5.0 * solution_norm + rhs_norm)
     )
     _assert_strict_json(result)
 
@@ -334,6 +363,27 @@ def test_cholesky_backward_error_metrics_report_exact_and_bad_factors():
     assert bad["spectral_relative_factorization_residual"] == pytest.approx(5.0 / 9.0)
     assert bad["frobenius_relative_factorization_residual"] == pytest.approx(5.0 / math.sqrt(97.0))
     _assert_strict_json(bad)
+
+
+def test_cholesky_full_q_variant_reports_exact_frobenius_residual_only():
+    matrix = torch.diag(torch.tensor([4.0, 9.0], dtype=torch.float64))
+    factor = torch.diag(torch.tensor([2.0, 3.1], dtype=torch.float64))
+
+    result = cholesky_frobenius_backward_error_metrics(
+        matrix,
+        factor,
+        compute_dtype=torch.float64,
+    )
+
+    assert result["reported_matrix_norm"] == "frobenius"
+    assert result["spectral_metrics_computed"] is False
+    assert result["matrix_frobenius_norm"] == pytest.approx(math.sqrt(97.0))
+    assert result["residual_frobenius_norm"] == pytest.approx(0.61)
+    assert result["frobenius_relative_factorization_residual"] == pytest.approx(
+        0.61 / math.sqrt(97.0)
+    )
+    assert "matrix_spectral_norm" not in result
+    _assert_strict_json(result)
 
 
 def test_cholesky_backward_error_metrics_use_fixed_floor_and_reject_bad_contracts():

@@ -53,9 +53,12 @@ ORBIT system and authenticated two-phase N0/ORBIT32/ORBIT64 execution path are p
 tested.  The independent support64 adapter now consumes only the exact-promoted CPU-float64 arm,
 registered neighbours, selected N0 strata, and the frozen absolute source-fp32 cutoff.  Completed
 target evidence can be copied immediately into immutable canonical bytes with a raw SHA-256.  The
-full-q/stress adapters, strict 122-slot intake and aggregate, discovery/locked-holdout threshold
-workflow, and probe Slurm runner remain incomplete.  This checkpoint therefore still authorizes no
-Slurm submission and no confirmatory access.
+registered full-q adapter now intercepts the pinned released one-target path, authenticates its
+rebuilt intermediates against the actual function and q Cholesky inputs, and executes the four
+registered precision arms on CPU.  The stress adapter, full-q artifact integration, strict 122-slot
+intake and aggregate, discovery/locked-holdout threshold workflow, and probe Slurm runner remain
+incomplete.  This checkpoint therefore still authorizes no Slurm submission and no confirmatory
+access.
 
 The earlier v3 artifact from job 2810629 motivated the strata and fault tests but is excluded from
 fitting numerical thresholds.  In particular, its observed errors may not be rounded upward and
@@ -319,6 +322,15 @@ Each solution is checked against its own matrix and the canonical fp64 matrix.  
 `H`, q/cross/Schur assembly discrepancies, Cholesky backward error, solve backward error, and the
 support/support-complement block, RHS, observation, and solution norms.  Full-q dense decomposition
 is prohibited above `m=50`; larger probes use support projection and fixed random block probes.
+
+The implemented adapter captures both native paths' actual adaptive jitters and requires exact
+equality between independently recomposed intermediates and the matrices presented to the pinned
+released Cholesky calls.  The two cross-precision solve arms operate on the complete already-jittered
+represented systems: they neither reassemble nor add another jitter.  A cast system that loses
+positive definiteness is retained as a factorization failure with no fabricated solution.  Large
+q-system solve and factorization backward errors use explicitly labelled exact Frobenius-norm
+residuals, avoiding unrelated spectral decompositions; every cross-arm tensor comparison and
+support/complement norm remains CPU float64.
 
 Matching TERA32's selected jitter defines a diagnostic arm, not the N1 reference.  Small residual
 against a self-assembled fp32 matrix does not establish that its assembly is correct.

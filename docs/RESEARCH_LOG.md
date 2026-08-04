@@ -7,6 +7,34 @@ scope downgrades are reported in place, loudly, naming the check that failed.
 
 ---
 
+## 2026-08-04 — Registered F02b full-q precision ladder: **implemented and locally verified, not executed on corpus**
+
+The released TERA `m=50` diagnostic now calls the pinned private one-target predictor and intercepts
+its actual function and q-coordinate Cholesky inputs, selected jitters, and factors.  A separate
+recomposition using the pinned kernel primitives must reproduce both captured matrices bit-for-bit
+before the four registered arms run: native fp32/fp32, complete fp32 system promoted to fp64,
+native quantized-input fp64/fp64, and complete fp64 system cast to fp32.  Each successful solve is
+checked against its own represented system and the native fp64 canonical system.  The artifact-ready
+result also records `H`, q, cross, unconditional and Schur discrepancies; exact Frobenius solve and
+Cholesky backward errors; actual function/q jitters; raw moments; fixed-neighbour identities; and
+support/support-complement matrix, RHS, conditional-observation, and solution norms.  Loss of
+positive definiteness after a registered cast is preserved as scientific output rather than repaired
+with an unregistered jitter.
+
+The committed synthetic registered-shape test exercised an actual `2500 x 2500` q system at
+`m=50`, selected target 94, and source rank 6 using the shared, thread-limited 8-CPU local policy.
+The fp32 q jitter escalated to approximately `1e-3`, while native fp64 accepted `1e-8`.  Promoting
+the complete fp32 system before solving reduced its own relative residual from about `5.28e-7` to
+`1.69e-15`, but its residual against the canonical fp64 system remained about `6.58e-6` versus
+`6.53e-6` for the fp32 solve.  Thus solve precision was not the main discrepancy in this fixture;
+assembly and/or selected jitter dominated.  The native-fp64 system cast to fp32 was not positive
+definite and is recorded as a failed fourth arm.  These are synthetic numerical mechanism results,
+not corpus accuracy, cost, or superiority evidence.  No corpus, evaluation labels, GPU, Slurm job,
+or confirmatory replica was accessed.  Stress execution, artifact integration, strict intake,
+threshold discovery, and authorized shared-CPU calibration remain pending.
+
+---
+
 ## 2026-08-04 — F02b support64 and target artifacts: **implemented and locally verified, not executed**
 
 The independent dense support-space oracle now accepts a registered absolute rank cutoff.  Its

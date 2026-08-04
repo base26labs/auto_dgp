@@ -10,6 +10,13 @@ import experiments.f02b_calibration_probe_execution as execution_module
 from cluster.f02b_calibration_grid import probe_task_for_index
 from experiments.f02_design import EVALUATION_TIME_INDICES
 from experiments.f02_internal_models import FrozenTERAParameters, TensorConfirmatorySplit
+from experiments.f02b_calibration_full_q import (
+    FULL_Q_ARM_NAMES,
+    _assemble_from_released_primitives,
+    _capture_released_target,
+    _execute_four_precision_arms,
+    execute_registered_full_q_target,
+)
 from experiments.f02b_calibration_probe_artifact import (
     PROBE_TARGET_ARTIFACT_SCHEMA_VERSION,
     ProbeTargetArtifactError,
@@ -61,9 +68,13 @@ def _source_promoted(value: torch.Tensor, dtype: torch.dtype) -> torch.Tensor:
     return value.to(dtype=torch.float32).to(dtype=dtype)
 
 
-def _synthetic_arm(dtype: torch.dtype = torch.float32) -> RegisteredOrbitArmInputs:
+def _synthetic_arm(
+    dtype: torch.dtype = torch.float32,
+    *,
+    task_index: int = 45,
+    train_count: int = 24,
+) -> RegisteredOrbitArmInputs:
     generator = torch.Generator().manual_seed(20260803)
-    train_count = 24
     dimension = 12
     latent_rank = 6
 
@@ -117,7 +128,7 @@ def _synthetic_arm(dtype: torch.dtype = torch.float32) -> RegisteredOrbitArmInpu
             torch.float32,
         ),
     )
-    work_plan = build_probe_work_plan(probe_task_for_index(45))
+    work_plan = build_probe_work_plan(probe_task_for_index(task_index))
     parameters = FrozenTERAParameters(
         lengthscale=torch.tensor([1.0], dtype=torch.float32),
         outputscale=float(torch.tensor(1.25, dtype=torch.float32)),
@@ -195,6 +206,124 @@ def test_registered_tolerances_are_dtype_and_role_exact() -> None:
             torch.float32,
             include_stratum_sweep=1,  # type: ignore[arg-type]
         )
+
+
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+def test_full_q_native_assembly_authenticates_released_path(dtype: torch.dtype) -> None:
+    arm = _synthetic_arm(dtype)
+    capture = _capture_released_target(arm, target_position=0)
+    assembly = _assemble_from_released_primitives(
+        arm,
+        target_position=0,
+        capture=capture,
+    )
+
+    m = arm.work_plan.production_m
+    assert assembly.H.shape == (m, m)
+    assert assembly.q.shape == (m, m, m)
+    assert assembly.value_gradient_cross.shape == (m * m, m)
+    assert assembly.schur_covariance.shape == (m * m, m * m)
+    assert torch.equal(assembly.function_covariance, capture.function.base_matrix)
+    assert torch.equal(assembly.schur_covariance, capture.q_coordinate.base_matrix)
+    assert assembly.function_jitter_used == capture.function.jitter_used
+    assert assembly.q_jitter_used == capture.q_coordinate.jitter_used
+
+
+def test_full_q_four_arm_ladder_separates_assembly_and_solve_precision() -> None:
+    arm32 = _synthetic_arm(torch.float32)
+    arm64 = _synthetic_arm(torch.float64)
+    geometry = scan_registered_source_geometry(arm32, 0)
+    projector64 = (
+        geometry.geometry.coordinates @ geometry.geometry.q_to_z.T
+    ).to(dtype=torch.float64)
+    assembly32 = _assemble_from_released_primitives(
+        arm32,
+        target_position=0,
+        capture=_capture_released_target(arm32, target_position=0),
+    )
+    assembly64 = _assemble_from_released_primitives(
+        arm64,
+        target_position=0,
+        capture=_capture_released_target(arm64, target_position=0),
+    )
+
+    arms = _execute_four_precision_arms(assembly32, assembly64, projector64)
+
+    assert tuple(arm.name for arm in arms) == FULL_Q_ARM_NAMES
+    assert [(arm.assembly_dtype, arm.solve_dtype) for arm in arms] == [
+        (torch.float32, torch.float32),
+        (torch.float32, torch.float64),
+        (torch.float64, torch.float64),
+        (torch.float64, torch.float32),
+    ]
+    assert all(arm.factorization_succeeded for arm in arms[:3])
+    assert not arms[3].factorization_succeeded
+    assert arms[3].factorization_failure_reason == (
+        "fixed_represented_q_system_not_positive_definite_in_solve_dtype"
+    )
+    assert arms[3].own_system_solve_error is None
+    assert arms[3].support_decomposition is None
+    for arm in arms[:3]:
+        assert arm.own_system_solve_error is not None
+        assert arm.canonical_fp64_system_solve_error is not None
+        assert arm.support_decomposition is not None
+        assert arm.support_decomposition["comparison_dtype"] == "float64"
+        assert arm.support_decomposition["comparison_device"] == "cpu"
+    for discrepancy in arms[2].assembly_discrepancies_from_native_fp64.values():
+        assert discrepancy["difference_maxabs"] == 0.0
+    assert arms[0].released_native_equivalence is not None
+    assert arms[2].released_native_equivalence is not None
+    assert arms[1].released_native_equivalence is None
+
+
+def test_registered_full_q_rejects_non_m50_work_plan_before_dense_execution() -> None:
+    arm32 = _synthetic_arm(torch.float32)
+    arm64 = _synthetic_arm(torch.float64)
+    geometries, strata = _geometry_and_strata(arm32)
+
+    with pytest.raises(ProbeExecutionInputError, match="only at m=50"):
+        execute_registered_full_q_target(
+            arm32,
+            arm64,
+            geometries[strata.selected_target_positions[0]],
+            strata,
+        )
+
+
+def test_registered_m50_full_q_executes_real_released_path_and_preserves_failure() -> None:
+    arm32 = _synthetic_arm(torch.float32, task_index=0, train_count=64)
+    arm64 = promote_registered_orbit_arm_to_float64(arm32)
+    geometries, strata = _geometry_and_strata(arm32)
+    position = strata.selected_target_positions[0]
+
+    result = execute_registered_full_q_target(
+        arm32,
+        arm64,
+        geometries[position],
+        strata,
+    )
+
+    assert result.task_index == 0
+    assert result.m == 50
+    assert result.q_system_dimension == 2_500
+    assert result.target_position == position
+    assert result.support_rank == 6
+    assert result.canonical_arm_name == FULL_Q_ARM_NAMES[2]
+    assert tuple(arm.name for arm in result.arms) == FULL_Q_ARM_NAMES
+    assert all(arm.factorization_succeeded for arm in result.arms[:3])
+    assert not result.arms[3].factorization_succeeded
+    assert result.arms[0].q_jitter_used > result.arms[2].q_jitter_used
+    assert result.arms[1].own_system_solve_error is not None
+    assert result.arms[0].own_system_solve_error is not None
+    assert (
+        result.arms[1].own_system_solve_error["relative_residual"]
+        < result.arms[0].own_system_solve_error["relative_residual"]
+    )
+    assert result.neighbour_positions.shape == (50,)
+    assert torch.equal(
+        result.neighbour_source_indices,
+        arm32.train.source_indices[result.neighbour_positions],
+    )
 
 
 def test_label_free_tensor_contract_rejects_noncanonical_row_design() -> None:

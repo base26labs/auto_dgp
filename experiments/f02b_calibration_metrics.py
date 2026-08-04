@@ -281,6 +281,57 @@ def dense_solve_error_metrics(
     return result
 
 
+def dense_solve_frobenius_error_metrics(
+    A: torch.Tensor,
+    b: torch.Tensor,
+    x: torch.Tensor,
+    *,
+    residual_compute_dtype: torch.dtype,
+) -> dict[str, Any]:
+    """Recompute a dense solve's residual and Frobenius-norm backward error.
+
+    This is the registered large full-q variant.  It retains exact dense
+    residual arithmetic but uses ``||A||_F`` as the matrix norm, avoiding an
+    unnecessary cubic-time SVD of a matrix that has already required a dense
+    Cholesky factorization.  The returned field names and provenance make the
+    norm choice explicit; this function never labels the Frobenius norm as a
+    spectral norm.
+    """
+
+    A = _require_real_tensor(A, "A", ndim=2)
+    b = _require_real_tensor(b, "b", ndim=1)
+    x = _require_real_tensor(x, "x", ndim=1)
+    _require_same_dtype_and_device(((A, "A"), (b, "b"), (x, "x")))
+    _require_explicit_compute_dtype(
+        residual_compute_dtype,
+        "residual_compute_dtype",
+        ((A, "A"), (b, "b"), (x, "x")),
+    )
+    if A.shape[0] != A.shape[1]:
+        raise CalibrationMetricInputError("A must be square")
+    dimension = A.shape[0]
+    if b.shape != (dimension,) or x.shape != (dimension,):
+        raise CalibrationMetricInputError("b and x must have shape (A.shape[0],)")
+
+    residual = b - A @ x
+    if not bool(torch.isfinite(residual).all().item()):
+        raise CalibrationMetricInputError(
+            "dense residual recomputation produced a nonfinite value"
+        )
+    operator_norm = torch.linalg.matrix_norm(A, ord="fro")
+    result = _dense_solve_error_record(
+        residual,
+        b,
+        x,
+        operator_norm,
+        residual_compute_dtype=residual_compute_dtype,
+    )
+    result["operator_norm_source"] = "dense_matrix_frobenius_norm"
+    result["backward_error_matrix_norm"] = "frobenius"
+    result["operator_frobenius_norm"] = result.pop("operator_norm_2")
+    return result
+
+
 def matrix_free_solve_error_metrics(
     residual: torch.Tensor,
     b: torch.Tensor,
@@ -523,6 +574,71 @@ def cholesky_backward_error_metrics(
         ),
         "frobenius_relative_factorization_residual": _finite_float(
             frobenius_relative_residual,
+            "frobenius_relative_factorization_residual",
+        ),
+    }
+
+
+def cholesky_frobenius_backward_error_metrics(
+    A: torch.Tensor,
+    L: torch.Tensor,
+    *,
+    compute_dtype: torch.dtype,
+) -> dict[str, Any]:
+    """Report exact Frobenius relative residual for a large Cholesky factor.
+
+    The factor contract is identical to :func:`cholesky_backward_error_metrics`.
+    Only the cubic-time spectral-norm calculations are omitted; the exact
+    ``A - L @ L.T`` residual and both Frobenius norms are still recomputed in
+    the declared source dtype.
+    """
+
+    A = _require_real_tensor(A, "A", ndim=2)
+    L = _require_real_tensor(L, "L", ndim=2)
+    _require_same_tensor_contract(A, L, "A", "L")
+    _require_explicit_compute_dtype(
+        compute_dtype,
+        "compute_dtype",
+        ((A, "A"), (L, "L")),
+    )
+    if A.shape[0] != A.shape[1]:
+        raise CalibrationMetricInputError("A and L must be square")
+    if int(torch.count_nonzero(torch.triu(L, diagonal=1)).item()) != 0:
+        raise CalibrationMetricInputError("L must be exactly lower triangular")
+    if bool((torch.diagonal(L) <= 0.0).any().item()):
+        raise CalibrationMetricInputError("L diagonal must be strictly positive")
+
+    residual = A - L @ L.T
+    if not bool(torch.isfinite(residual).all().item()):
+        raise CalibrationMetricInputError(
+            "Cholesky residual recomputation produced a nonfinite value"
+        )
+    matrix_norm = torch.linalg.matrix_norm(A, ord="fro")
+    residual_norm = torch.linalg.matrix_norm(residual, ord="fro")
+    floor = torch.finfo(compute_dtype).tiny
+    denominator = torch.maximum(matrix_norm, A.new_tensor(floor))
+    relative_residual = residual_norm / denominator
+    return {
+        "matrix_dimension": int(A.shape[0]),
+        "compute_dtype": _dtype_name(compute_dtype),
+        "compute_device": str(A.device),
+        "normalization_floor": floor,
+        "factor_contract": "exactly_lower_triangular_with_strictly_positive_diagonal",
+        "residual_kind": "cholesky_factorization_residual",
+        "residual_definition": "A_minus_L_matmul_L_transpose",
+        "reported_matrix_norm": "frobenius",
+        "spectral_metrics_computed": False,
+        "matrix_frobenius_norm": _finite_float(matrix_norm, "matrix_frobenius_norm"),
+        "residual_frobenius_norm": _finite_float(
+            residual_norm,
+            "residual_frobenius_norm",
+        ),
+        "frobenius_relative_factorization_residual_denominator": _finite_float(
+            denominator,
+            "frobenius_relative_factorization_residual_denominator",
+        ),
+        "frobenius_relative_factorization_residual": _finite_float(
+            relative_residual,
             "frobenius_relative_factorization_residual",
         ),
     }
