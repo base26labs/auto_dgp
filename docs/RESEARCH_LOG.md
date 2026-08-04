@@ -1,5 +1,27 @@
 # Research log
 
+## 2026-08-04 — PRISM-GP seed-43 confirmation: **passes the frozen paper-style rule**
+
+The protocol was committed at `b66f60e` before the independent data existed. Shared 8-CPU data job
+`2814655` generated four seed-43 corpora with 9,500 rows for 4, 6, 8, and 10 particles. Shared
+8-CPU benchmark job `2814735` then completed all 12 paper split tasks; every task used one task,
+no GPU, no exclusive allocation, and no oversubscription.
+
+Across the three paper split seeds, paired PRISM-minus-TERA mean NLL deltas were `-0.004712`,
+`-0.002949`, `-0.001872`, and `-0.000882` for 4, 6, 8, and 10 particles. The corresponding
+gradient-RMSE deltas were `-0.07992`, `-0.02876`, `-0.00885`, and `-0.00274`. Value-RMSE deltas
+were `+3.29e-7`, `-6.96e-8`, `-1.51e-8`, and `+1.29e-8`, all far inside the frozen `1e-4`
+noninferiority margin. The maximum task-level counted-operation and state ratios to TERA-20 were
+`0.728864` and `0.11475`; all solves converged with maximum fresh relative residual
+`9.9974e-11`.
+
+The frozen aggregate therefore records `passes_frozen_paper_style_rule=true`. This establishes a
+deterministic paper-style Pareto result—value RMSE noninferiority with strictly lower
+observation-variance NLL and gradient RMSE—not statistical significance or a shared-node timing or
+cost claim. The aggregate SHA-256 is
+`d4313bdcf9686b46ed9fa3f994862735249f3bc2b6e40da5bf14fadf8f85e3da`; complete corpus and task
+hashes are in `releases/paper_nbody_prism_seed43_b66f60e.json`.
+
 ## 2026-08-04 — PRISM-GP-30/16 development: **passes development Pareto gate; independent confirmation frozen**
 
 The formal paper N-body v4 result at source commit `076315e` falsified ORBIT-G30. A mechanism audit

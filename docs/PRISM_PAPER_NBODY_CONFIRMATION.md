@@ -1,6 +1,6 @@
 # PRISM-GP paper N-body confirmation
 
-Status: **frozen before independent corpus generation**.
+Status: **confirmation complete; protocol frozen before independent corpus generation**.
 
 ## Framework
 
@@ -58,3 +58,10 @@ PRISM candidate from the same learned parameters.
 node, one task, exactly 8 CPUs, no GPU, no exclusive allocation, and no oversubscription. Shared-node
 wall clock is descriptive only and is never cost or performance evidence. Aggregate with
 `python -m experiments.paper_nbody_prism_aggregate`.
+
+## Result
+
+The seed-43 run passed the frozen rule: value RMSE was noninferior and mean NLL and gradient RMSE
+were strictly lower for all four particle counts. All 12 tasks passed the solve and resource gates.
+The immutable aggregate and per-task hashes are recorded in
+`releases/paper_nbody_prism_seed43_b66f60e.json`.
