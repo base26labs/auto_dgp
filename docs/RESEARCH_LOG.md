@@ -7,6 +7,50 @@ scope downgrades are reported in place, loudly, naming the check that failed.
 
 ---
 
+## 2026-08-04 — ORBIT-G30 paper N-body v4: **registered claim falsified**
+
+Commit `076315efdeef4492897651515eaeeed95e8dd863` (tree
+`992ee04b7048845b409de58ee722c80d8350abc6`) was deployed directly to BC and evaluated on the
+complete 12-task paper-style N-body grid. Data array job 2814140 generated the four released
+pair-loop datasets; benchmark array job 2814144 crossed particle counts 4/6/8/10 with seeds 6535,
+8830, and 92357. Every task completed on a nonexclusive shared `short` node with one task, exactly
+8 CPUs, no GPU, and thread pools fixed at 8. Wall time is descriptive only and is excluded from all
+claims.
+
+All four datasets contain the expected 9500 post-filter rows and dimensions 24/36/48/60. Their
+SHA-256 digests are recorded in `releases/paper_nbody_v4_076315e.json`. The 12 task artifacts and
+aggregate are complete and hash-locked; the aggregate at BC path
+`runs/paper_nbody_v4/aggregate.json` has SHA-256
+`ef4c6cddb9fd749415acafd00592eeafac204de6ba0a1a145a668ec09fd52cd6`.
+
+Three-seed means are:
+
+| particles | arm | value RMSE | value NLL | gradient RMSE | metric gate | resource gate |
+|---:|:---|---:|---:|---:|:---:|:---:|
+| 4 | TERA-20 | 0.010765173 | -2.513771 | 1.534284 | — | — |
+| 4 | ORBIT-G30 | 0.010765257 | -2.517588 | 1.466608 | fail | pass |
+| 6 | TERA-20 | 0.081240496 | -1.846455 | 2.160431 | — | — |
+| 6 | ORBIT-G30 | 0.081240468 | -1.848878 | 2.135605 | pass | fail |
+| 8 | TERA-20 | 0.264908031 | 0.814563 | 2.144300 | — | — |
+| 8 | ORBIT-G30 | 0.264908031 | 0.813456 | 2.137720 | pass | fail |
+| 10 | TERA-20 | 0.165832798 | 3.093693 | 3.313166 | — | — |
+| 10 | ORBIT-G30 | 0.165833002 | 3.093718 | 3.312027 | fail | fail |
+
+Thus `beats_TERA_under_registered_rule=false`: n=4 misses value RMSE by `8.34e-8`; n=10 misses
+value RMSE by `2.04e-7` and NLL by `2.48e-5`; and the registered maximum-flop proxy fails for every
+n=6/8/10 task. All state proxies pass, all primal and adjoint solves converge, and same-m TERA-20 /
+ORBIT-20 agreement remains numerical-control quality. The paper's N-body table reports value and
+gradient RMSE; value NLL here is the user-requested additional calibration diagnostic, computed with
+predictive observation variance including fitted value-noise variance.
+
+Post-result diagnosis must not revise v4. The guard currently computes complete value-plus-gradient
+ORBIT-20 and ORBIT-30 predictions before selecting one. Removing the unused adjoint is worthwhile
+but not sufficient under the existing conservative maximum proxy: a component-summary upper-bound
+recalculation remains above TERA for every n=6/8/10 task. Any changed solver tolerance, resource
+formula, candidate, or success rule therefore requires a new protocol and independent confirmation.
+
+---
+
 ## 2026-08-04 — ORBIT-G30 dual guard: **refit-per-seed development robustness, formal data untouched**
 
 The excluded two-particle study was repeated with an independent one-epoch released-TERA fit for
