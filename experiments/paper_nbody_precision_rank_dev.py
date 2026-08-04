@@ -112,9 +112,7 @@ def _state_elements(m: int, rank: int, dimension: int) -> int:
 
 
 def _primal_flops(m: int, rank: int, matvecs: int, preconditioners: int) -> int:
-    return matvecs * _orbit_matmul_flops(m, rank) + preconditioners * _preconditioner_flops(
-        m, rank
-    )
+    return matvecs * _orbit_matmul_flops(m, rank) + preconditioners * _preconditioner_flops(m, rank)
 
 
 def _resource_summary(details: Any, dimension: int) -> dict[str, Any]:

@@ -254,16 +254,13 @@ def predict_budgeted_guarded_marginals(
                         * variance_scale
                     )
                     variance_is_nested = bool(
-                        expanded_prediction.variance
-                        <= base_prediction.variance + roundoff_floor
+                        expanded_prediction.variance <= base_prediction.variance + roundoff_floor
                     )
                     normalized_shift = float(
                         (expanded_prediction.mean - base_prediction.mean).abs()
                         / torch.sqrt(base_prediction.variance)
                     )
-                    use_expanded = (
-                        variance_is_nested and normalized_shift <= trust_radius_sigma
-                    )
+                    use_expanded = variance_is_nested and normalized_shift <= trust_radius_sigma
 
             selected_system = expanded_system if use_expanded else base_system
             selected_prediction = expanded_prediction if use_expanded else base_prediction
