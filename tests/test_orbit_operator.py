@@ -304,6 +304,116 @@ def test_external_rank_epsilon_selects_support_without_claiming_native_exactness
     assert float(fixed_source.discarded_eigenvalue_sum) > 0.0
 
 
+def test_source_absolute_cutoff_is_identical_across_promoted_compute_dtypes():
+    differences32 = torch.diag(
+        torch.tensor([1.0, 4e-7, 2e-7], dtype=torch.float32)
+    )
+    source = build_local_geometry_from_differences(
+        differences32,
+        rank_epsilon=torch.finfo(torch.float32).eps,
+    )
+    source_cutoff = float(source.operational_singular_value_cutoff)
+    promoted = build_local_geometry_from_differences(
+        differences32.to(torch.float64),
+        absolute_singular_value_cutoff=source_cutoff,
+    )
+
+    assert source.rank == promoted.rank == 2
+    assert float(promoted.operational_singular_value_cutoff) == source_cutoff
+    assert promoted.rank_epsilon_used is None
+    assert promoted.operational_cutoff_source == (
+        "caller_supplied_absolute_singular_value_cutoff"
+    )
+    assert float(promoted.native_singular_value_cutoff) < source_cutoff
+    assert source.is_exact
+    assert not promoted.is_exact
+
+
+def test_direct_svd_explicit_rank_and_relative_cutoff_retain_evidence():
+    differences = torch.diag(
+        torch.tensor([4.0, 2.0, 1.0, 0.0], dtype=torch.float64)
+    )
+
+    explicit_rank = build_local_geometry_from_differences(differences, rank=2)
+    relative = build_local_geometry_from_differences(
+        differences,
+        relative_tolerance=0.3,
+    )
+
+    assert explicit_rank.rank == relative.rank == 2
+    assert explicit_rank.singular_values is not None
+    assert explicit_rank.operational_singular_value_cutoff is not None
+    assert explicit_rank.native_singular_value_cutoff is not None
+    assert explicit_rank.rank_epsilon_used is not None
+    assert not explicit_rank.is_exact
+    assert relative.operational_cutoff_source == (
+        "current_svd_smax_maxshape_epsilon_and_relative_tolerance"
+    )
+    assert float(relative.operational_singular_value_cutoff) == pytest.approx(1.2)
+
+
+def test_absolute_cutoff_conflicts_with_relative_or_rank_epsilon():
+    differences = torch.eye(2, dtype=torch.float64)
+
+    with pytest.raises(ValueError, match="relative_tolerance"):
+        build_local_geometry_from_differences(
+            differences,
+            relative_tolerance=0.1,
+            absolute_singular_value_cutoff=0.2,
+        )
+    with pytest.raises(ValueError, match="rank_epsilon"):
+        build_local_geometry_from_differences(
+            differences,
+            rank_epsilon=torch.finfo(torch.float32).eps,
+            absolute_singular_value_cutoff=0.2,
+        )
+    with pytest.raises(ValueError, match="and rank are mutually exclusive"):
+        build_local_geometry_from_differences(
+            differences,
+            rank=1,
+            absolute_singular_value_cutoff=0.2,
+        )
+
+
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+def test_absolute_cutoff_uses_strict_selection_at_equality_and_one_ulp(dtype):
+    cutoff = torch.tensor(1.0, dtype=dtype)
+    below = torch.nextafter(cutoff, torch.tensor(0.0, dtype=dtype))
+    above = torch.nextafter(cutoff, torch.tensor(float("inf"), dtype=dtype))
+
+    ranks = tuple(
+        build_local_geometry_from_differences(
+            singular_value.reshape(1, 1),
+            absolute_singular_value_cutoff=cutoff,
+        ).rank
+        for singular_value in (below, cutoff, above)
+    )
+
+    assert ranks == (0, 0, 1)
+
+
+@pytest.mark.parametrize("cutoff", [-1.0, float("nan"), float("inf")])
+def test_absolute_cutoff_rejects_invalid_values(cutoff):
+    with pytest.raises(ValueError, match="absolute_singular_value_cutoff"):
+        build_local_geometry_from_differences(
+            torch.eye(2, dtype=torch.float64),
+            absolute_singular_value_cutoff=cutoff,
+        )
+
+
+def test_zero_spectrum_retains_rank_zero_direct_svd_evidence():
+    geometry = build_local_geometry_from_differences(
+        torch.zeros(3, 4, dtype=torch.float64),
+        absolute_singular_value_cutoff=0.0,
+    )
+
+    assert geometry.rank == 0
+    assert geometry.is_exact
+    assert geometry.singular_values is not None
+    assert torch.equal(geometry.singular_values, torch.zeros(3, dtype=torch.float64))
+    assert float(geometry.operational_singular_value_cutoff) == 0.0
+
+
 @pytest.mark.parametrize("rank_epsilon", [0.0, -1e-6, 1.0, float("nan")])
 def test_external_rank_epsilon_rejects_invalid_values(rank_epsilon):
     with pytest.raises(ValueError, match="rank_epsilon"):

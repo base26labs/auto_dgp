@@ -7,6 +7,48 @@ scope downgrades are reported in place, loudly, naming the check that failed.
 
 ---
 
+## 2026-08-04 — F02b ORBIT probe execution: **implemented and locally verified, not executed**
+
+The pure numerical probe executor now has a two-phase, label-free geometry path.  A source-fp32
+factory privately snapshots the training tensors, the 100 public evaluation coordinates and
+identities, the frozen fit parameters, and the authoritative work plan; it recomputes the pinned
+vendor KNN rows rather than accepting caller-supplied neighbours.  A domain-separated source digest
+binds every training/evaluation tensor, parameter, neighbour identity, and plan.  Phase-boundary
+checks recompute that full content digest, in addition to checking Tensor versions, so `.data` or
+NumPy mutations cannot run under stale provenance.  The fp64 arm can only be obtained by exact
+promotion and is verified by reconstructing and hashing its unique binary32 source.
+
+All 100 primary targets first undergo one direct-SVD source-fp32 geometry scan without evaluation
+labels.  Each record binds the original standardized differences, singular spectrum, coordinates,
+rank boundary, native and operational cutoffs, neighbour identities, and source arm.  Only the
+complete ordered population can select the registered worst/median/best strata; the resulting
+rank-grid and selection digests travel with every target execution and determine whether that target
+receives the full tolerance sweep.  A caller can no longer freely request a stratum sweep.
+
+The fp32 target build consumes the exact authenticated geometry object from that scan and therefore
+does not perform a second SVD.  Its paired fp64 build performs one native-fp64 SVD but uses the exact
+absolute cutoff frozen by the source-fp32 SVD, rather than recomputing `smax*max(D,m)*eps32` from a
+different spectrum.  The artifact-facing rank record separately reports the operational and native
+strict ranks; `basis_exact=false` remains expected when the fixed fp32 rule discards a mode that is
+resolvable in fp64.  The generic public ORBIT builder always derives geometry from its own inputs;
+precomputed geometry is confined to the private registered path after difference/digest validation.
+
+Each target/dtype builds one reusable system and runs registered tolerances as independent
+zero-start solves.  The production `1e-5` object is reused from that sequence, and nonconvergence is
+retained as scientific output.  The canonical matrix-free action and residual are the solver's final
+fresh `A(x)` and exact represented `b-A(x)`.  An immediate independent replay is persisted
+separately with max-absolute and 2-norm differences; it is not required to be bitwise identical on
+CUDA and does not replace the canonical residual in the conditional backward-error diagnostic.
+
+Static checks and 89 focused execution/operator/reusable-system tests passed.  The full repository
+suite passed on a shared, thread-limited 8-CPU environment (`703 passed, 1 skipped`).  Shared-host
+runtime is not performance or cost evidence.  No corpus, protected evaluation label, GPU, Slurm job,
+or confirmatory replica was accessed.  The authorization-aware runner, immutable artifact emission,
+support64/full-q/stress arms, strict intake, threshold discovery, and protected evaluation remain
+unimplemented; F02b is not frozen and no predictive superiority claim follows from this milestone.
+
+---
+
 ## 2026-08-03 — F02b ORBIT reusable-system evidence: **implemented and locally verified, not executed**
 
 The probe-facing ORBIT numerical core now separates one-time local-system construction from

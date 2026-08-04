@@ -8,10 +8,12 @@ from typing import Any
 import pytest
 import torch
 
+from gp.orbit import build_local_geometry_from_differences
 from gp.orbit.predictor import (
     LocalPrediction,
     LocalValueSystem,
     MarginalPredictions,
+    _build_local_value_system_from_registered_geometry,
     build_local_value_system,
     predict_local_value,
     solve_local_value_system,
@@ -79,6 +81,89 @@ def _build_system(*, seed: int = 1901, function_jitter: float = 1e-8) -> LocalVa
         function_jitter=function_jitter,
         reduced_jitter=1e-8,
     )
+
+
+def test_build_reuses_precomputed_geometry_without_a_second_svd(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    x_condition, values, gradients, x_target, lengthscale = _nonzero_case(seed=1902)
+    scaled_differences = (x_condition - x_target).T / lengthscale.reshape(-1, 1)
+    geometry = build_local_geometry_from_differences(scaled_differences)
+    reference = build_local_value_system(
+        x_condition,
+        values,
+        gradients,
+        x_target,
+        lengthscale=lengthscale,
+        outputscale=1.4,
+        value_noise_variance=0.06,
+        gradient_noise_variance=0.04,
+        kernel="matern52",
+        gradient_noise_model="metric_matched",
+    )
+
+    def forbidden_svd(*args, **kwargs):
+        raise AssertionError("precomputed geometry must suppress a second SVD")
+
+    monkeypatch.setattr(torch.linalg, "svd", forbidden_svd)
+    system = _build_local_value_system_from_registered_geometry(
+        x_condition,
+        values,
+        gradients,
+        x_target,
+        lengthscale=lengthscale,
+        outputscale=1.4,
+        value_noise_variance=0.06,
+        gradient_noise_variance=0.04,
+        kernel="matern52",
+        gradient_noise_model="metric_matched",
+        precomputed_geometry=geometry,
+    )
+
+    assert system.geometry is geometry
+    reference_prediction = solve_local_value_system(
+        reference,
+        tolerance=1e-10,
+        max_iterations=200,
+    )
+    precomputed_prediction = solve_local_value_system(
+        system,
+        tolerance=1e-10,
+        max_iterations=200,
+    )
+    torch.testing.assert_close(
+        precomputed_prediction.mean,
+        reference_prediction.mean,
+        rtol=2e-12,
+        atol=2e-12,
+    )
+    torch.testing.assert_close(
+        precomputed_prediction.variance,
+        reference_prediction.variance,
+        rtol=2e-12,
+        atol=2e-12,
+    )
+
+
+def test_public_builder_does_not_accept_precomputed_geometry() -> None:
+    x_condition, values, gradients, x_target, lengthscale = _nonzero_case(seed=1904)
+    scaled_differences = (x_condition - x_target).T / lengthscale.reshape(-1, 1)
+    geometry = build_local_geometry_from_differences(scaled_differences)
+
+    with pytest.raises(TypeError, match="precomputed_geometry"):
+        build_local_value_system(
+            x_condition,
+            values,
+            gradients,
+            x_target,
+            lengthscale=lengthscale,
+            outputscale=1.4,
+            value_noise_variance=0.06,
+            gradient_noise_variance=0.04,
+            kernel="matern52",
+            gradient_noise_model="metric_matched",
+            precomputed_geometry=geometry,
+        )
 
 
 def _tensor_snapshot(root: object) -> dict[str, tuple[torch.Tensor, torch.Tensor]]:

@@ -66,6 +66,14 @@ number and can discard singular directions that remain numerically resolvable.  
 and radial coefficients always use the full `DeltaᵀDelta`; an explicitly truncated basis changes
 only the retained statistics, not the underlying kernel geometry.
 
+Paired-precision calibration freezes the **absolute** operational cutoff produced by the source
+fp32 SVD and applies that scalar unchanged to the fp64 SVD.  Recomputing a cutoff from fp64's own
+`smax`, even with `eps32`, would define a different rank rule.  Native-dtype cutoffs and ranks are
+reported separately to distinguish operational support matching from modes resolvable in fp64.  The
+public predictor always derives geometry from its current inputs; the calibration-only reuse path
+may skip a second fp32 SVD only after the source differences, complete rank evidence, and content
+digests have been authenticated.
+
 This is an exact removal of algebraic redundancy only.  For generic high-dimensional neighbourhoods
 with `d ≥ m`, `r=m`; in that regime there is no dimensional compression.  Dropping any positive mode
 is a distinct approximate method and is not part of `ORBIT-exact`.

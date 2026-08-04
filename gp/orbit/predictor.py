@@ -315,7 +315,7 @@ def _trusted_operator_norm_upper_bound(
     return result, provenance
 
 
-def build_local_value_system(
+def _build_local_value_system_impl(
     x_condition: torch.Tensor,
     value_condition: torch.Tensor,
     gradient_condition: torch.Tensor,
@@ -330,11 +330,13 @@ def build_local_value_system(
     rank: int | None = None,
     relative_rank_tolerance: float | None = None,
     rank_epsilon: float | torch.Tensor | None = None,
+    absolute_rank_cutoff: float | torch.Tensor | None = None,
+    precomputed_geometry: LocalGeometry | None = None,
     function_jitter: float = 1e-8,
     reduced_jitter: float = 1e-8,
     build_preconditioner: bool = True,
 ) -> LocalValueSystem:
-    """Build one local represented system for reuse across CG tolerances."""
+    """Internal builder; precomputed geometry is trusted only after caller binding."""
 
     if x_condition.ndim != 2:
         raise ValueError("x_condition must have shape (m, d)")
@@ -369,12 +371,53 @@ def build_local_value_system(
         scaled_differences = raw_differences / lengthscale.reshape(1, 1)
     else:
         scaled_differences = raw_differences / lengthscale.reshape(-1, 1)
-    geometry = build_local_geometry_from_differences(
-        scaled_differences,
-        rank=rank,
-        relative_tolerance=relative_rank_tolerance,
-        rank_epsilon=rank_epsilon,
-    )
+    if precomputed_geometry is None:
+        geometry = build_local_geometry_from_differences(
+            scaled_differences,
+            rank=rank,
+            relative_tolerance=relative_rank_tolerance,
+            rank_epsilon=rank_epsilon,
+            absolute_singular_value_cutoff=absolute_rank_cutoff,
+        )
+    else:
+        if any(
+            value is not None
+            for value in (
+                rank,
+                relative_rank_tolerance,
+                rank_epsilon,
+                absolute_rank_cutoff,
+            )
+        ):
+            raise ValueError(
+                "precomputed_geometry is mutually exclusive with rank selection arguments"
+            )
+        if type(precomputed_geometry) is not LocalGeometry:
+            raise TypeError("precomputed_geometry must be an exact LocalGeometry")
+        geometry = precomputed_geometry
+        geometry_tensors = (
+            geometry.coordinates,
+            geometry.q_to_z,
+            geometry.eigenvalues,
+            geometry.discarded_eigenvalue_sum,
+        )
+        if any(value.dtype != dtype or value.device != device for value in geometry_tensors):
+            raise ValueError("precomputed geometry must match the input dtype and device")
+        if any(not bool(torch.isfinite(value).all().item()) for value in geometry_tensors):
+            raise ValueError("precomputed geometry tensors must be finite")
+        if geometry.coordinates.shape[0] != m or geometry.q_to_z.shape != (
+            m,
+            geometry.rank,
+        ):
+            raise ValueError("precomputed geometry has incompatible coordinate shapes")
+        if geometry.eigenvalues.shape != (geometry.rank,):
+            raise ValueError("precomputed geometry eigenvalues have an incompatible shape")
+        if geometry.discarded_eigenvalue_sum.shape != ():
+            raise ValueError("precomputed discarded eigenvalue sum must be scalar")
+        if bool((geometry.eigenvalues <= 0.0).any().item()) or float(
+            geometry.discarded_eigenvalue_sum
+        ) < 0.0:
+            raise ValueError("precomputed geometry spectrum must be nonnegative")
     # Kernel coefficients continue to use the full geometry in approximate-rank
     # mode; only the represented observation basis is truncated.
     gram = scaled_differences.T @ scaled_differences
@@ -508,6 +551,96 @@ def build_local_value_system(
         operator_lower_bound_provenance=lower_provenance,
         operator_norm_upper_bound=upper_bound,
         operator_norm_upper_bound_provenance=upper_provenance,
+    )
+
+
+def build_local_value_system(
+    x_condition: torch.Tensor,
+    value_condition: torch.Tensor,
+    gradient_condition: torch.Tensor,
+    x_target: torch.Tensor,
+    *,
+    lengthscale: torch.Tensor,
+    outputscale: float | torch.Tensor,
+    value_noise_variance: float | torch.Tensor,
+    gradient_noise_variance: float | torch.Tensor,
+    kernel: str,
+    gradient_noise_model: str = "iid",
+    rank: int | None = None,
+    relative_rank_tolerance: float | None = None,
+    rank_epsilon: float | torch.Tensor | None = None,
+    absolute_rank_cutoff: float | torch.Tensor | None = None,
+    function_jitter: float = 1e-8,
+    reduced_jitter: float = 1e-8,
+    build_preconditioner: bool = True,
+) -> LocalValueSystem:
+    """Build one local represented system for reuse across CG tolerances.
+
+    Geometry is always derived from this call's conditioning inputs.  The sole
+    trusted precomputed-geometry path is private to the registered calibration
+    executor, which binds the geometry to its source differences and digest.
+    """
+
+    return _build_local_value_system_impl(
+        x_condition,
+        value_condition,
+        gradient_condition,
+        x_target,
+        lengthscale=lengthscale,
+        outputscale=outputscale,
+        value_noise_variance=value_noise_variance,
+        gradient_noise_variance=gradient_noise_variance,
+        kernel=kernel,
+        gradient_noise_model=gradient_noise_model,
+        rank=rank,
+        relative_rank_tolerance=relative_rank_tolerance,
+        rank_epsilon=rank_epsilon,
+        absolute_rank_cutoff=absolute_rank_cutoff,
+        precomputed_geometry=None,
+        function_jitter=function_jitter,
+        reduced_jitter=reduced_jitter,
+        build_preconditioner=build_preconditioner,
+    )
+
+
+def _build_local_value_system_from_registered_geometry(
+    x_condition: torch.Tensor,
+    value_condition: torch.Tensor,
+    gradient_condition: torch.Tensor,
+    x_target: torch.Tensor,
+    *,
+    lengthscale: torch.Tensor,
+    outputscale: float | torch.Tensor,
+    value_noise_variance: float | torch.Tensor,
+    gradient_noise_variance: float | torch.Tensor,
+    kernel: str,
+    gradient_noise_model: str,
+    precomputed_geometry: LocalGeometry,
+    function_jitter: float = 1e-8,
+    reduced_jitter: float = 1e-8,
+    build_preconditioner: bool = True,
+) -> LocalValueSystem:
+    """Consume geometry already authenticated by the registered probe executor."""
+
+    return _build_local_value_system_impl(
+        x_condition,
+        value_condition,
+        gradient_condition,
+        x_target,
+        lengthscale=lengthscale,
+        outputscale=outputscale,
+        value_noise_variance=value_noise_variance,
+        gradient_noise_variance=gradient_noise_variance,
+        kernel=kernel,
+        gradient_noise_model=gradient_noise_model,
+        rank=None,
+        relative_rank_tolerance=None,
+        rank_epsilon=None,
+        absolute_rank_cutoff=None,
+        precomputed_geometry=precomputed_geometry,
+        function_jitter=function_jitter,
+        reduced_jitter=reduced_jitter,
+        build_preconditioner=build_preconditioner,
     )
 
 
@@ -659,6 +792,7 @@ def predict_local_value(
     rank: int | None = None,
     relative_rank_tolerance: float | None = None,
     rank_epsilon: float | torch.Tensor | None = None,
+    absolute_rank_cutoff: float | torch.Tensor | None = None,
     cg_tolerance: float = 1e-6,
     cg_max_iterations: int | None = None,
     use_preconditioner: bool = True,
@@ -681,6 +815,7 @@ def predict_local_value(
         rank=rank,
         relative_rank_tolerance=relative_rank_tolerance,
         rank_epsilon=rank_epsilon,
+        absolute_rank_cutoff=absolute_rank_cutoff,
         function_jitter=function_jitter,
         reduced_jitter=reduced_jitter,
         build_preconditioner=use_preconditioner,

@@ -45,7 +45,9 @@ class LocalGeometry:
 
     ``coordinates`` contains the coordinates of the ``m`` scaled differences
     in an orthonormal basis, shape ``(m, r)``.  ``q_to_z`` maps row-wise TERA
-    statistics ``q = D.T @ g`` to the orthonormal statistics ``z``.
+    statistics ``q = D.T @ g`` to the orthonormal statistics ``z``.  The five
+    optional trailing fields retain direct-SVD rank evidence when this object
+    is built from differences; Gram-matrix callers leave them unavailable.
     """
 
     coordinates: torch.Tensor
@@ -53,6 +55,11 @@ class LocalGeometry:
     eigenvalues: torch.Tensor
     discarded_eigenvalue_sum: torch.Tensor
     is_exact: bool
+    singular_values: torch.Tensor | None = None
+    operational_singular_value_cutoff: torch.Tensor | None = None
+    native_singular_value_cutoff: torch.Tensor | None = None
+    rank_epsilon_used: torch.Tensor | None = None
+    operational_cutoff_source: str | None = None
 
     @property
     def rank(self) -> int:
@@ -133,6 +140,7 @@ def build_local_geometry_from_differences(
     rank: int | None = None,
     relative_tolerance: float | None = None,
     rank_epsilon: float | torch.Tensor | None = None,
+    absolute_singular_value_cutoff: float | torch.Tensor | None = None,
 ) -> LocalGeometry:
     """Build local coordinates from a stable thin SVD of scaled differences.
 
@@ -146,14 +154,27 @@ def build_local_geometry_from_differences(
         raise ValueError("differences must have nonzero shape (d, m)")
     if rank is not None and relative_tolerance is not None:
         raise ValueError("set at most one of rank and relative_tolerance")
+    if absolute_singular_value_cutoff is not None and relative_tolerance is not None:
+        raise ValueError(
+            "absolute_singular_value_cutoff and relative_tolerance are mutually exclusive"
+        )
+    if absolute_singular_value_cutoff is not None and rank is not None:
+        raise ValueError(
+            "absolute_singular_value_cutoff and rank are mutually exclusive"
+        )
+    if absolute_singular_value_cutoff is not None and rank_epsilon is not None:
+        raise ValueError(
+            "absolute_singular_value_cutoff and rank_epsilon are mutually exclusive"
+        )
     maximum_rank = min(differences.shape)
     if rank is not None and not 1 <= rank <= maximum_rank:
         raise ValueError("rank must lie between 1 and min(d, m)")
     if relative_tolerance is not None and not 0.0 <= relative_tolerance < 1.0:
         raise ValueError("relative_tolerance must lie in [0, 1)")
-    if rank_epsilon is None:
+    epsilon: torch.Tensor | None = None
+    if absolute_singular_value_cutoff is None and rank_epsilon is None:
         epsilon = differences.new_tensor(torch.finfo(differences.dtype).eps)
-    else:
+    elif rank_epsilon is not None:
         epsilon = torch.as_tensor(
             rank_epsilon,
             device=differences.device,
@@ -170,17 +191,34 @@ def build_local_geometry_from_differences(
         full_matrices=False,
     )
     largest = singular_values[0]
-    numerical_tolerance = largest * max(differences.shape) * epsilon
     native_numerical_tolerance = (
         largest * max(differences.shape) * torch.finfo(differences.dtype).eps
     )
-    if rank is not None:
-        keep = torch.arange(singular_values.numel(), device=differences.device) < rank
-        keep = keep & (singular_values > numerical_tolerance)
+    if absolute_singular_value_cutoff is not None:
+        threshold = torch.as_tensor(
+            absolute_singular_value_cutoff,
+            device=differences.device,
+            dtype=differences.dtype,
+        )
+        if threshold.numel() != 1 or not bool(torch.isfinite(threshold).item()):
+            raise ValueError("absolute_singular_value_cutoff must be a finite scalar")
+        threshold = threshold.reshape(())
+        if float(threshold) < 0.0:
+            raise ValueError("absolute_singular_value_cutoff must be non-negative")
+        cutoff_source = "caller_supplied_absolute_singular_value_cutoff"
     else:
-        threshold = numerical_tolerance
+        if epsilon is None:  # pragma: no cover - exhaustive branch guard
+            raise RuntimeError("rank epsilon is unavailable")
+        threshold = largest * max(differences.shape) * epsilon
         if relative_tolerance is not None:
             threshold = torch.maximum(threshold, largest * relative_tolerance)
+            cutoff_source = "current_svd_smax_maxshape_epsilon_and_relative_tolerance"
+        else:
+            cutoff_source = "current_svd_smax_times_maxshape_times_rank_epsilon"
+    if rank is not None:
+        keep = torch.arange(singular_values.numel(), device=differences.device) < rank
+        keep = keep & (singular_values > threshold)
+    else:
         keep = singular_values > threshold
 
     discarded = (singular_values[~keep] ** 2).sum()
@@ -197,6 +235,11 @@ def build_local_geometry_from_differences(
             eigenvalues=differences.new_empty((0,)),
             discarded_eigenvalue_sum=discarded,
             is_exact=is_exact,
+            singular_values=singular_values,
+            operational_singular_value_cutoff=threshold,
+            native_singular_value_cutoff=native_numerical_tolerance,
+            rank_epsilon_used=epsilon,
+            operational_cutoff_source=cutoff_source,
         )
 
     kept_singular_values = singular_values[keep]
@@ -209,6 +252,11 @@ def build_local_geometry_from_differences(
         eigenvalues=kept_singular_values**2,
         discarded_eigenvalue_sum=discarded,
         is_exact=is_exact,
+        singular_values=singular_values,
+        operational_singular_value_cutoff=threshold,
+        native_singular_value_cutoff=native_numerical_tolerance,
+        rank_epsilon_used=epsilon,
+        operational_cutoff_source=cutoff_source,
     )
 
 
