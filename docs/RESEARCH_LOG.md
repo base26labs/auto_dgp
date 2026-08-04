@@ -7,6 +7,28 @@ scope downgrades are reported in place, loudly, naming the check that failed.
 
 ---
 
+## 2026-08-04 — Strict F02b 122-slot probe intake: **implemented and locally verified, not run on a cohort**
+
+The task index advanced to v2 before any corpus run so it also binds the actual sorted runtime
+package record and Slurm array/job/node identities.  The filesystem aggregate now enumerates all 122
+identity-derived task directories and all 24,400 target filenames without globbing.  No-follow
+descriptors, single-read hashing, regular-file and hard-link checks, directory stability checks, and
+the target/index/envelope validation chain precede cohort admission.  Expected launch, fit-catalog,
+fit-payload, and deployed-source identities are supplied explicitly rather than learned from the
+first successful task.
+
+The catalog retains every invalid or missing slot, requires one common runtime record, and audits
+the registered scheduler topology: tasks 0–119 share one array identity, tasks 120 and 121 use two
+additional pairwise-distinct allocations, and all 122 element job IDs are unique.  It may mark a
+complete structural cohort `analysis_ready=true`, but hard-codes `freeze_ready=false` and can be
+published only by exclusive atomic creation outside the input root.  The compact test populated one
+complete 200-target task and left the other 121 registered slots missing; the valid slot was accepted
+and the catalog correctly remained not analysis-ready.  No corpus, labels, GPU, Slurm job,
+runtime/cost comparison, or confirmatory replica was accessed.  Threshold discovery and the
+authorized shared-CPU runner remain pending.
+
+---
+
 ## 2026-08-04 — Canonical F02b 200-target task index: **implemented and locally verified**
 
 Each probe task now has a small canonical index over exactly 100 target positions times the two
@@ -15,12 +37,13 @@ and are bound by raw SHA-256.  Before emission, the builder parses every target,
 target and neighbour identities, requires one common source arm and main N0 grid/stratum identity,
 and enforces the registered support64, full-q, and stress counts.  It also binds the selected fit
 payload/catalog, launch manifest, probe deployment, and the shared 8-CPU public execution envelope.
+Schema v2 also binds the actual sorted runtime package record and Slurm array/job/node identities.
 
 One complete synthetic resource-sweep task exercised all 200 target records and the index/envelope
 pair; removing one target was the single registered rejection check.  This remains integrity and
 mechanism evidence, not corpus accuracy, runtime, cost, or superiority evidence.  No corpus, labels,
-GPU, Slurm job, or confirmatory replica was accessed.  The filesystem-level 122-directory aggregate,
-threshold workflow, and authorized runner remain pending.
+GPU, Slurm job, or confirmatory replica was accessed.  Threshold workflow and the authorized runner
+remain pending.
 
 ---
 

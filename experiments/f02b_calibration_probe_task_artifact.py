@@ -33,6 +33,7 @@ from experiments.f02b_calibration_contract import (
     validate_probe_execution_envelope,
     verify_numeric_payload_bytes,
 )
+from experiments.f02b_calibration_fit import SHARING_VERIFICATION_MODE
 from experiments.f02b_calibration_fit_aggregate import (
     CalibrationFitAggregateError,
     validate_expected_deployment,
@@ -48,7 +49,7 @@ from experiments.f02b_calibration_probe_core import (
     build_probe_work_plan,
 )
 
-PROBE_TASK_INDEX_SCHEMA_VERSION = "f02b_calibration_probe_task_index_v1"
+PROBE_TASK_INDEX_SCHEMA_VERSION = "f02b_calibration_probe_task_index_v2"
 PROBE_TASK_INDEX_TYPE = "f02b_registered_probe_task_index"
 PROBE_TARGET_ARTIFACT_COUNT = 2 * PRIMARY_EVALUATION_ROW_COUNT
 _DTYPES = ("float32", "float64")
@@ -56,6 +57,7 @@ _INDEX_FIELDS = {
     "artifact_type",
     "calibration_id",
     "data_access",
+    "execution_provenance",
     "input_artifacts",
     "probe_deployment",
     "probe_work_plan_sha256",
@@ -65,6 +67,15 @@ _INDEX_FIELDS = {
     "targets",
     "task_index",
     "task_record",
+}
+_EXECUTION_PROVENANCE_FIELDS = {"runtime", "scheduler"}
+_RUNTIME_FIELDS = {"packages", "platform", "python_executable", "python_version"}
+_SCHEDULER_FIELDS = {
+    "array_job_id",
+    "array_task_id",
+    "job_id",
+    "node_list",
+    "sharing_verification_mode",
 }
 _INPUT_FIELDS = {
     "fit_catalog_cohort_identity_sha256",
@@ -164,6 +175,47 @@ def _fresh_json(value: Any, label: str) -> Any:
         return json.loads(canonical_json_bytes(value))
     except (CalibrationContractError, TypeError, ValueError) as error:
         raise ProbeTaskArtifactError(f"{label} must be finite strict JSON") from error
+
+
+def _execution_provenance(value: Any, task_index: int) -> dict[str, Any]:
+    provenance = _object(
+        _fresh_json(value, "execution_provenance"),
+        _EXECUTION_PROVENANCE_FIELDS,
+        "execution_provenance",
+    )
+    runtime = _object(provenance["runtime"], _RUNTIME_FIELDS, "execution runtime")
+    for name in ("platform", "python_executable", "python_version"):
+        if type(runtime[name]) is not str or not runtime[name]:
+            raise ProbeTaskArtifactError(f"execution runtime {name} must be nonempty text")
+    packages = runtime["packages"]
+    if not isinstance(packages, list) or not packages:
+        raise ProbeTaskArtifactError("execution runtime packages must be a nonempty list")
+    normalized_packages: list[tuple[str, str]] = []
+    for position, raw in enumerate(packages):
+        package = _object(raw, {"name", "version"}, f"runtime package {position}")
+        if any(type(package[name]) is not str or not package[name] for name in package):
+            raise ProbeTaskArtifactError("runtime package fields must be nonempty text")
+        normalized_packages.append((package["name"], package["version"]))
+    if normalized_packages != sorted(normalized_packages) or len(
+        normalized_packages
+    ) != len(set(normalized_packages)):
+        raise ProbeTaskArtifactError("runtime packages must be sorted and unique")
+
+    scheduler = _object(
+        provenance["scheduler"],
+        _SCHEDULER_FIELDS,
+        "execution scheduler",
+    )
+    for name in ("array_job_id", "job_id"):
+        if type(scheduler[name]) is not str or not scheduler[name].isdigit():
+            raise ProbeTaskArtifactError(f"scheduler {name} must be decimal text")
+    if type(scheduler["node_list"]) is not str or not scheduler["node_list"]:
+        raise ProbeTaskArtifactError("scheduler node_list must be nonempty text")
+    if _plain_int(scheduler["array_task_id"], "scheduler.array_task_id") != task_index:
+        raise ProbeTaskArtifactError("scheduler array task does not match the probe task")
+    if scheduler["sharing_verification_mode"] != SHARING_VERIFICATION_MODE:
+        raise ProbeTaskArtifactError("scheduler sharing verification mode is not registered")
+    return provenance
 
 
 def _target_filename(target_position: int, compute_dtype: str) -> str:
@@ -365,6 +417,7 @@ def build_canonical_probe_task_artifact(
     fit_catalog_cohort_identity_sha256: str,
     launch_manifest_raw_sha256: str,
     probe_deployment: Mapping[str, Any],
+    execution_provenance: Mapping[str, Any],
 ) -> CanonicalProbeTaskArtifact:
     """Build one immutable index after validating the complete 200-target set."""
 
@@ -420,6 +473,10 @@ def build_canonical_probe_task_artifact(
         "source_arm_binding_sha256": source_binding,
         "input_artifacts": input_artifacts,
         "probe_deployment": deployment,
+        "execution_provenance": _execution_provenance(
+            execution_provenance,
+            task.task_index,
+        ),
         "target_artifact_count": PROBE_TARGET_ARTIFACT_COUNT,
         "targets": [entries_by_key[key] for key in ordered_keys],
         "data_access": _fresh_json(_DATA_ACCESS, "data_access"),
@@ -478,6 +535,7 @@ def parse_canonical_probe_task_index(
         validate_expected_deployment(document["probe_deployment"])
     except CalibrationFitAggregateError as error:
         raise ProbeTaskArtifactError("probe_deployment is invalid") from error
+    _execution_provenance(document["execution_provenance"], task.task_index)
     if document["data_access"] != _DATA_ACCESS:
         raise ProbeTaskArtifactError("probe task data-access record is mismatched")
     if (

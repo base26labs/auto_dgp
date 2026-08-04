@@ -23,6 +23,10 @@ from experiments.f02b_calibration_full_q import (
     _execute_four_precision_arms,
     execute_registered_full_q_target,
 )
+from experiments.f02b_calibration_probe_aggregate import (
+    aggregate_probe_stage,
+    validate_probe_catalog,
+)
 from experiments.f02b_calibration_probe_artifact import (
     PROBE_TARGET_ARTIFACT_SCHEMA_VERSION,
     ProbeTargetArtifactError,
@@ -67,6 +71,7 @@ from experiments.f02b_calibration_probe_task_artifact import (
     build_canonical_probe_task_artifact,
     build_probe_task_execution_envelope,
     parse_canonical_probe_task_index,
+    probe_task_artifact_paths,
     validate_probe_task_artifact_pair,
 )
 from experiments.f02b_calibration_stress import (
@@ -1237,7 +1242,7 @@ def test_canonical_target_artifact_parser_rejects_noncanonical_duplicate_and_has
         )
 
 
-def test_probe_task_index_binds_the_complete_registered_target_set() -> None:
+def test_probe_task_index_binds_the_complete_registered_target_set(tmp_path) -> None:
     arm32 = _synthetic_arm(torch.float32)
     arm64 = promote_registered_orbit_arm_to_float64(arm32)
     geometries, strata = _geometry_and_strata(arm32)
@@ -1267,6 +1272,21 @@ def test_probe_task_index_binds_the_complete_registered_target_set() -> None:
         "catalog_generation_tree": "7" * 40,
         "catalog_sha256": F02_CATALOG_SHA256,
     }
+    execution_provenance = {
+        "runtime": {
+            "packages": [{"name": "torch", "version": str(torch.__version__)}],
+            "platform": "test-platform",
+            "python_executable": "/test/python",
+            "python_version": "3.10-test",
+        },
+        "scheduler": {
+            "array_job_id": "2811000",
+            "array_task_id": arm32.work_plan.task_index,
+            "job_id": "2811045",
+            "node_list": "shared-test-node",
+            "sharing_verification_mode": "scontrol_show_job_oversubscribe_ok_v1",
+        },
+    }
     artifact = build_canonical_probe_task_artifact(
         arm32.work_plan.task_index,
         targets,
@@ -1276,6 +1296,7 @@ def test_probe_task_index_binds_the_complete_registered_target_set() -> None:
         fit_catalog_cohort_identity_sha256="b" * 64,
         launch_manifest_raw_sha256="c" * 64,
         probe_deployment=deployment,
+        execution_provenance=execution_provenance,
     )
     parsed = parse_canonical_probe_task_index(
         artifact.index_bytes,
@@ -1293,7 +1314,7 @@ def test_probe_task_index_binds_the_complete_registered_target_set() -> None:
     envelope = build_probe_task_execution_envelope(
         arm32.work_plan.task_index,
         artifact,
-        output_root="/tmp/f02b-probe-stage",
+        output_root=tmp_path,
         runtime_allocation={
             "exclusive_node": False,
             "requested_gpu_count": 0,
@@ -1312,12 +1333,40 @@ def test_probe_task_index_binds_the_complete_registered_target_set() -> None:
     validated_index, validated_envelope = validate_probe_task_artifact_pair(
         artifact,
         canonical_json_bytes(envelope),
-        output_root="/tmp/f02b-probe-stage",
+        output_root=tmp_path,
     )
     assert validated_index == parsed
     assert validated_envelope["canonical_record"]["runtime_allocation"][
         "requested_cpus_per_task"
     ] == 8
+
+    paths = probe_task_artifact_paths(tmp_path, arm32.work_plan.task_index)
+    paths.directory.mkdir(parents=True)
+    paths.task_index.write_bytes(artifact.index_bytes)
+    paths.execution_envelope.write_bytes(canonical_json_bytes(envelope))
+    for target in artifact.targets:
+        (paths.directory / target.filename).write_bytes(target.payload_bytes)
+    context = {
+        "fit_catalog_raw_sha256": "9" * 64,
+        "fit_catalog_integrity_payload_sha256": "a" * 64,
+        "fit_catalog_cohort_identity_sha256": "b" * 64,
+        "launch_manifest_raw_sha256": "c" * 64,
+        "probe_deployment": deployment,
+        "fit_payloads": [
+            {
+                "fit_task_index": index,
+                "fit_payload_raw_sha256": "8" * 64,
+            }
+            for index in range(45)
+        ],
+    }
+    catalog = aggregate_probe_stage(tmp_path, expected_context=context)
+    validated_catalog = validate_probe_catalog(catalog)
+    assert validated_catalog["valid_task_count"] == 1
+    assert validated_catalog["invalid_task_count"] == 121
+    assert validated_catalog["analysis_ready"] is False
+    assert validated_catalog["tasks"][45]["status"] == "valid"
+    assert validated_catalog["tasks"][45]["target_artifact_count"] == 200
 
     with pytest.raises(ProbeTaskArtifactError, match="exactly 200"):
         build_canonical_probe_task_artifact(
@@ -1329,4 +1378,5 @@ def test_probe_task_index_binds_the_complete_registered_target_set() -> None:
             fit_catalog_cohort_identity_sha256="b" * 64,
             launch_manifest_raw_sha256="c" * 64,
             probe_deployment=deployment,
+            execution_provenance=execution_provenance,
         )

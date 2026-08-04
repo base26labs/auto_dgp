@@ -62,9 +62,11 @@ augmentation, and native-fp64 cutoff comparison.  The immutable target artifact 
 full-q and stress evidence only beside its CPU-float64 ORBIT target and preserves their independent
 identities.  A canonical task index now requires all 100 target positions in both registered dtypes,
 binds the 200 identity-derived target files by raw SHA-256, and checks auxiliary-arm counts against
-the work plan.  Strict 122-directory intake and aggregate, discovery/locked-holdout threshold
-workflow, and the probe Slurm runner remain incomplete.  This checkpoint therefore still authorizes
-no Slurm submission and no confirmatory access.
+the work plan.  The strict aggregate enumerates all 122 task directories and 24,400 target files,
+uses no-follow single-read intake, audits the three-allocation scheduler cohort, and can report only
+`analysis_ready`, never `freeze_ready`.  Discovery/locked-holdout threshold workflow and the probe
+Slurm runner remain incomplete.  This checkpoint therefore still authorizes no Slurm submission and
+no confirmatory access.
 
 The earlier v3 artifact from job 2810629 motivated the strata and fault tests but is excluded from
 fitting numerical thresholds.  In particular, its observed errors may not be rounded upward and
@@ -422,7 +424,16 @@ position.  It rejects missing or duplicate position/dtype pairs, cross-dtype tar
 identity drift, inconsistent grid/stratum hashes, auxiliary arms on fp32, incorrect support64/full-q
 stratum counts, and an absent or extra registered stress target.  The index also binds the fit
 payload/catalog, launch manifest, deployed source identity, and the public shared-CPU execution
-envelope without duplicating large numerical arrays.
+envelope without duplicating large numerical arrays.  Task-index schema v2 additionally hashes the
+actual sorted runtime-package record and Slurm array/job/node identities needed for cohort auditing.
+
+The probe aggregate opens the input root, every task directory, and every required file without
+following links.  It rejects hard-link aliases, mutations during a read, missing or unexpected
+entries, noncanonical bytes, target/index/envelope hash drift, input-cohort mismatch, multiple
+runtime environments, duplicate element job IDs, and any scheduler topology other than one array
+identity for tasks 0–119 plus distinct identities for tasks 120 and 121.  Missing and invalid slots
+remain explicit in the 122-entry integrity-protected catalog.  Even a complete structurally valid
+catalog sets only `analysis_ready=true`; `freeze_ready` remains unconditionally false.
 
 The three hashes live in a non-recursive execution envelope outside the canonical task record being
 hashed.  The scaffold CLI record alone is not this envelope and cannot be submitted directly.
