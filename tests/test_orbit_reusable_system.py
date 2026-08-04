@@ -16,6 +16,7 @@ from gp.orbit.predictor import (
     _build_local_value_system_from_registered_geometry,
     build_local_value_system,
     predict_local_value,
+    predict_local_value_and_mean_gradient,
     solve_local_value_system,
 )
 
@@ -246,6 +247,44 @@ def test_predict_local_value_delegates_to_build_then_solve() -> None:
     assert public.solve.preconditioner_applications == reusable.solve.preconditioner_applications
     assert public.solve.termination_reason == reusable.solve.termination_reason
     assert public.certificate == reusable.certificate
+
+
+def test_implicit_mean_gradient_matches_direct_autograd() -> None:
+    x_condition, values, gradients, x_target, lengthscale = _nonzero_case(seed=1905)
+    model_kwargs = {
+        "lengthscale": lengthscale,
+        "outputscale": 1.25,
+        "value_noise_variance": 0.05,
+        "gradient_noise_variance": 0.03,
+        "kernel": "rbf",
+        "gradient_noise_model": "iid",
+        "cg_tolerance": 1e-12,
+        "cg_max_iterations": 300,
+    }
+    differentiable_target = x_target.clone().requires_grad_(True)
+    direct = predict_local_value(
+        x_condition,
+        values,
+        gradients,
+        differentiable_target,
+        **model_kwargs,
+    )
+    direct_gradient = torch.autograd.grad(direct.functional_mean, differentiable_target)[0].squeeze(
+        0
+    )
+
+    implicit = predict_local_value_and_mean_gradient(
+        x_condition,
+        values,
+        gradients,
+        x_target,
+        **model_kwargs,
+    )
+
+    assert implicit.prediction.solve.converged
+    assert implicit.adjoint_solve.converged
+    torch.testing.assert_close(implicit.prediction.mean, direct.mean, rtol=2e-11, atol=2e-11)
+    torch.testing.assert_close(implicit.mean_gradient, direct_gradient, rtol=2e-6, atol=2e-7)
 
 
 def test_one_system_supports_multiple_tolerances_without_mutating_tensor_state() -> None:

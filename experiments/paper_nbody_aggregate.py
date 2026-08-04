@@ -11,7 +11,7 @@ import numpy as np
 
 from experiments.paper_nbody_benchmark import SCHEMA, TASKS
 
-AGGREGATE_SCHEMA = "paper_nbody_benchmark_aggregate_v1"
+AGGREGATE_SCHEMA = "paper_nbody_benchmark_aggregate_v2"
 ARM_LABELS = ("TERA-20", "ORBIT-20", "ORBIT-30")
 
 
@@ -37,10 +37,12 @@ def load_complete_results(input_root: Path) -> list[dict[str, Any]]:
         if not isinstance(arms, dict) or set(arms) != set(ARM_LABELS):
             raise ValueError(f"paper benchmark arms are missing or out of order: {path}")
         for label in ARM_LABELS:
-            for metric in ("value_rmse", "value_nll"):
+            for metric in ("value_rmse", "value_nll", "gradient_rmse"):
                 value = arms[label].get(metric)
                 if not isinstance(value, (int, float)) or not np.isfinite(value):
                     raise ValueError(f"invalid {label} {metric}: {path}")
+            if arms[label].get("value_nll_variance") != "observation_variance":
+                raise ValueError(f"invalid {label} value NLL variance semantics: {path}")
         results.append(result)
     return results
 
@@ -71,6 +73,9 @@ def aggregate_results(results: list[dict[str, Any]]) -> dict[str, Any]:
                 "value_nll": _mean_std(
                     [float(result["arms"][label]["value_nll"]) for result in selected]
                 ),
+                "gradient_rmse": _mean_std(
+                    [float(result["arms"][label]["gradient_rmse"]) for result in selected]
+                ),
             }
 
         paired_rmse = [
@@ -83,15 +88,27 @@ def aggregate_results(results: list[dict[str, Any]]) -> dict[str, Any]:
             - float(result["arms"]["TERA-20"]["value_nll"])
             for result in selected
         ]
+        paired_gradient_rmse = [
+            float(result["arms"]["ORBIT-30"]["gradient_rmse"])
+            - float(result["arms"]["TERA-20"]["gradient_rmse"])
+            for result in selected
+        ]
         seed_joint_wins = [
-            rmse_delta < 0.0 and nll_delta < 0.0
-            for rmse_delta, nll_delta in zip(paired_rmse, paired_nll, strict=True)
+            value_rmse_delta < 0.0 and nll_delta < 0.0 and gradient_rmse_delta < 0.0
+            for value_rmse_delta, nll_delta, gradient_rmse_delta in zip(
+                paired_rmse,
+                paired_nll,
+                paired_gradient_rmse,
+                strict=True,
+            )
         ]
         dataset_mean_joint_win = (
             arm_summary["ORBIT-30"]["value_rmse"]["mean"]
             < arm_summary["TERA-20"]["value_rmse"]["mean"]
             and arm_summary["ORBIT-30"]["value_nll"]["mean"]
             < arm_summary["TERA-20"]["value_nll"]["mean"]
+            and arm_summary["ORBIT-30"]["gradient_rmse"]["mean"]
+            < arm_summary["TERA-20"]["gradient_rmse"]["mean"]
         )
         all_seed_joint_wins = all_seed_joint_wins and all(seed_joint_wins)
         all_dataset_mean_joint_wins = all_dataset_mean_joint_wins and dataset_mean_joint_win
@@ -101,6 +118,7 @@ def aggregate_results(results: list[dict[str, Any]]) -> dict[str, Any]:
             "paired_ORBIT_30_minus_TERA_20": {
                 "value_rmse": _mean_std(paired_rmse),
                 "value_nll": _mean_std(paired_nll),
+                "gradient_rmse": _mean_std(paired_gradient_rmse),
                 "joint_win_by_seed": seed_joint_wins,
             },
             "candidate_mean_joint_win": dataset_mean_joint_win,
@@ -114,6 +132,10 @@ def aggregate_results(results: list[dict[str, Any]]) -> dict[str, Any]:
                 ),
                 "absolute_latent_variance_difference": max(
                     float(result["same_m_control"]["maximum_absolute_latent_variance_difference"])
+                    for result in selected
+                ),
+                "absolute_mean_gradient_difference": max(
+                    float(result["same_m_control"]["maximum_absolute_mean_gradient_difference"])
                     for result in selected
                 ),
             },
@@ -131,22 +153,26 @@ def aggregate_results(results: list[dict[str, Any]]) -> dict[str, Any]:
             "candidate": "ORBIT-30",
             "baseline": "TERA-20",
             "resource_match_all_tasks": resource_match,
-            "lower_mean_rmse_and_nll_on_every_dataset": all_dataset_mean_joint_wins,
-            "lower_rmse_and_nll_on_every_seed_task": all_seed_joint_wins,
+            "lower_mean_value_rmse_value_nll_and_gradient_rmse_on_every_dataset": (
+                all_dataset_mean_joint_wins
+            ),
+            "lower_value_rmse_value_nll_and_gradient_rmse_on_every_seed_task": (
+                all_seed_joint_wins
+            ),
             "beats_TERA_under_registered_rule": (
                 resource_match and all_dataset_mean_joint_wins and all_seed_joint_wins
             ),
             "statistical_significance_claimed": False,
             "wall_clock_used_for_claim": False,
-            "gradient_claimed": False,
+            "gradient_claimed": True,
         },
     }
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--input-root", type=Path, default=Path("runs/paper_nbody_v1"))
-    parser.add_argument("--output", type=Path, default=Path("runs/paper_nbody_v1/aggregate.json"))
+    parser.add_argument("--input-root", type=Path, default=Path("runs/paper_nbody_v2"))
+    parser.add_argument("--output", type=Path, default=Path("runs/paper_nbody_v2/aggregate.json"))
     args = parser.parse_args()
     aggregate = aggregate_results(load_complete_results(args.input_root))
     args.output.parent.mkdir(parents=True, exist_ok=True)

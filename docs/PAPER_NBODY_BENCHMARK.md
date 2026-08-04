@@ -34,17 +34,24 @@ The registered comparison is deliberately small:
 - `ORBIT-20`: a same-neighbour control using the exact same learned state; and
 - `ORBIT-30`: the fixed resource-expansion hypothesis.
 
-The candidate succeeds only if `ORBIT-30` has lower value RMSE and value NLL than `TERA-20` on every
-seed task and every dataset mean, all solves converge, and its maximum per-target structured state
-and counted-operation proxies remain within the corresponding `TERA-20` dense envelopes. This is a
-simple deterministic decision rule, not a statistical-significance claim. `m=30` is fixed before
-reading any of the four paper test sets. Float64 ORBIT solves use a fixed `1e-10` relative residual
-tolerance; the resulting iterations are charged to the operation proxy.
+The candidate succeeds only if `ORBIT-30` has lower value RMSE, observation-variance value NLL, and
+gradient RMSE than `TERA-20` on every seed task and every dataset mean, all primal and adjoint solves
+converge, and its maximum per-target structured state and counted-operation proxies remain within the
+corresponding `TERA-20` dense envelopes. This is a simple deterministic decision rule, not a
+statistical-significance claim. `m=30` is fixed before reading any of the four paper test sets.
+Float64 ORBIT solves use a fixed `1e-10` relative residual tolerance; the resulting primal and
+adjoint iterations are charged to the operation proxy. A conservative factor of four is also charged
+to ORBIT's stored-state and implicit-pullback proxies; these remain analytic proxies rather than
+measured hardware cost.
 
 The primary table reports value RMSE and gradient RMSE for each particle count as mean and standard
-deviation over the three seeds. If a method does not yet expose a valid full-gradient prediction,
-mark that cell unsupported rather than substituting a different metric. Value NLL may be retained as
-a secondary repository diagnostic, but it is not part of the paper's N-body primary table.
+deviation over the three seeds. Both gradients are defined as the derivative of the scalar posterior
+mean with nearest-neighbour membership held piecewise constant. TERA uses its released-compatible
+batched derivative path. ORBIT uses one matrix-free implicit adjoint solve, avoiding an autograd tape
+through all CG iterations. Value NLL is additionally reported as a secondary repository diagnostic,
+using predictive observation variance; it is part of the registered repository decision even though
+it is not part of the paper's N-body primary table. A gradient NLL is not reported because neither
+arm constructs the required full gradient predictive covariance.
 
 Record training seconds per epoch and prediction time for diagnostics. Because these runs use shared
 CPU nodes while the paper timed a single GPU, wall-clock values must not be used for cross-paper

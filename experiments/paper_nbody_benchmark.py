@@ -10,9 +10,9 @@ training configuration.  ORBIT consumes the exact same fitted kernel state:
 
 The benchmark evaluates the complete paper test split.  Wall-clock values are
 descriptive only because execution is on shared CPU nodes.  Analytic operation
-and state proxies are reported separately.  ORBIT currently exposes a scalar
-conditional, so full-gradient RMSE is explicitly unsupported rather than
-silently replaced by a different quantity.
+and state proxies are reported separately.  Full-gradient predictions are
+gradients of each method's scalar posterior mean; ORBIT uses an implicit
+adjoint solve rather than retaining the iterative CG trajectory in autograd.
 
 Usage:
     python -m experiments.paper_nbody_benchmark --task-index 0
@@ -41,12 +41,12 @@ from experiments.f02_internal_models import (
     fit_released_tera,
     freeze_tera_parameters,
     predict_orbit,
-    predict_released_tera,
+    predict_released_tera_with_mean_gradient,
 )
 from gp.exact import gaussian_nll
 from gp.metrics import rmse
 
-SCHEMA = "paper_nbody_benchmark_task_v1"
+SCHEMA = "paper_nbody_benchmark_task_v2"
 PAPER_REFERENCE = "https://arxiv.org/abs/2505.09134"
 PAPER_PARTICLES = (4, 6, 8, 10)
 PAPER_SEEDS = (6535, 8830, 92357)
@@ -238,7 +238,12 @@ def _cast_split(split: TensorConfirmatorySplit, dtype: torch.dtype) -> TensorCon
     )
 
 
-def _prediction_metrics(prediction: ScalarPrediction, target: torch.Tensor) -> dict[str, Any]:
+def _prediction_metrics(
+    prediction: ScalarPrediction,
+    mean_gradient: torch.Tensor,
+    target: torch.Tensor,
+    target_gradient: torch.Tensor,
+) -> dict[str, Any]:
     if not bool(torch.isfinite(prediction.mean).all()):
         raise RuntimeError("prediction mean contains nonfinite values")
     if not bool(torch.isfinite(prediction.latent_variance).all()) or bool(
@@ -249,11 +254,16 @@ def _prediction_metrics(prediction: ScalarPrediction, target: torch.Tensor) -> d
         (prediction.observation_variance <= 0.0).any()
     ):
         raise RuntimeError("prediction observation variance must be finite and positive")
+    if mean_gradient.shape != target_gradient.shape or not bool(
+        torch.isfinite(mean_gradient).all()
+    ):
+        raise RuntimeError("posterior-mean gradient must match the finite target gradient")
     return {
         "value_rmse": rmse(prediction.mean, target),
         "value_nll": gaussian_nll(target, prediction.mean, prediction.observation_variance),
-        "gradient_rmse": None,
-        "gradient_status": "unsupported_by_orbit_scalar_conditional_v1",
+        "value_nll_variance": "observation_variance",
+        "gradient_rmse": rmse(mean_gradient, target_gradient),
+        "gradient_status": "gradient_of_scalar_posterior_mean",
         "minimum_latent_variance": float(prediction.latent_variance.min()),
         "maximum_latent_variance": float(prediction.latent_variance.max()),
     }
@@ -284,17 +294,35 @@ def _orbit_resource_summary(
     details = prediction.details
     if details is None:
         raise RuntimeError("ORBIT prediction is missing solver diagnostics")
+    gradient_fields = (
+        details.mean_gradient,
+        details.adjoint_iterations,
+        details.adjoint_operator_matvecs,
+        details.adjoint_preconditioner_applications,
+        details.adjoint_relative_residuals,
+        details.adjoint_converged,
+    )
+    if any(item is None for item in gradient_fields):
+        raise RuntimeError("ORBIT prediction is missing implicit-gradient diagnostics")
     ranks = [int(item) for item in details.ranks.detach().cpu()]
     matvecs = [int(item) for item in details.operator_matvecs.detach().cpu()]
     preconditioners = [int(item) for item in details.preconditioner_applications.detach().cpu()]
     residuals = [float(item) for item in details.relative_residuals.detach().cpu()]
     converged = [bool(item) for item in details.converged.detach().cpu()]
-    if not all(converged):
-        raise RuntimeError("ORBIT did not converge for every paper test target")
-    if not all(math.isfinite(item) and item <= ORBIT_CG_TOLERANCE for item in residuals):
-        raise RuntimeError("ORBIT fresh residual exceeds the registered tolerance")
+    adjoint_matvecs = [int(item) for item in details.adjoint_operator_matvecs.detach().cpu()]
+    adjoint_preconditioners = [
+        int(item) for item in details.adjoint_preconditioner_applications.detach().cpu()
+    ]
+    adjoint_residuals = [float(item) for item in details.adjoint_relative_residuals.detach().cpu()]
+    adjoint_converged = [bool(item) for item in details.adjoint_converged.detach().cpu()]
+    if not all(converged) or not all(adjoint_converged):
+        raise RuntimeError("ORBIT primal or adjoint solve did not converge for every test target")
+    if not all(
+        math.isfinite(item) and item <= ORBIT_CG_TOLERANCE for item in residuals + adjoint_residuals
+    ):
+        raise RuntimeError("ORBIT primal or adjoint fresh residual exceeds the tolerance")
 
-    solve_flops = [
+    primal_solve_flops = [
         matvec_count * _orbit_matmul_flops(m, rank)
         + preconditioner_count * _preconditioner_flops(m, rank)
         for rank, matvec_count, preconditioner_count in zip(
@@ -304,24 +332,57 @@ def _orbit_resource_summary(
             strict=True,
         )
     ]
+    adjoint_solve_flops = [
+        matvec_count * _orbit_matmul_flops(m, rank)
+        + preconditioner_count * _preconditioner_flops(m, rank)
+        for rank, matvec_count, preconditioner_count in zip(
+            ranks,
+            adjoint_matvecs,
+            adjoint_preconditioners,
+            strict=True,
+        )
+    ]
     build_flops = [8 * dimension * m * m + 12 * m**3 + 4 * rank**3 for rank in ranks]
-    counted_flops = [build + solve for build, solve in zip(build_flops, solve_flops, strict=True)]
-    state_elements = [
+    implicit_pullback_flops = [
+        4 * (build + _orbit_matmul_flops(m, rank))
+        for build, rank in zip(build_flops, ranks, strict=True)
+    ]
+    counted_flops = [
+        build + primal + adjoint + pullback
+        for build, primal, adjoint, pullback in zip(
+            build_flops,
+            primal_solve_flops,
+            adjoint_solve_flops,
+            implicit_pullback_flops,
+            strict=True,
+        )
+    ]
+    base_state_elements = [
         7 * m * m + 2 * m * rank + rank * rank + rank + 2 * m * dimension for rank in ranks
     ]
+    counted_state_elements = [4 * state for state in base_state_elements]
     return {
-        "schema": "orbit_structured_proxy_v1",
+        "schema": "orbit_structured_value_gradient_proxy_v2",
         "m": m,
         "rank_minimum": min(ranks),
         "rank_maximum": max(ranks),
-        "iterations_mean": float(details.iterations.double().mean()),
-        "iterations_maximum": int(details.iterations.max()),
-        "maximum_fresh_relative_residual": max(residuals),
-        "all_converged": True,
-        "counted_state_elements_maximum": max(state_elements),
+        "primal_iterations_mean": float(details.iterations.double().mean()),
+        "primal_iterations_maximum": int(details.iterations.max()),
+        "adjoint_iterations_mean": float(details.adjoint_iterations.double().mean()),
+        "adjoint_iterations_maximum": int(details.adjoint_iterations.max()),
+        "maximum_primal_fresh_relative_residual": max(residuals),
+        "maximum_adjoint_fresh_relative_residual": max(adjoint_residuals),
+        "all_primal_and_adjoint_solves_converged": True,
+        "autograd_tape_excludes_cg_iterations": True,
+        "state_safety_multiplier": 4,
+        "counted_state_elements_maximum": max(counted_state_elements),
         "build_flops_proxy_maximum_per_target": max(build_flops),
-        "solve_flops_mean_per_target": float(np.mean(solve_flops)),
-        "solve_flops_maximum_per_target": max(solve_flops),
+        "primal_solve_flops_mean_per_target": float(np.mean(primal_solve_flops)),
+        "primal_solve_flops_maximum_per_target": max(primal_solve_flops),
+        "adjoint_solve_flops_mean_per_target": float(np.mean(adjoint_solve_flops)),
+        "adjoint_solve_flops_maximum_per_target": max(adjoint_solve_flops),
+        "implicit_pullback_safety_multiplier": 4,
+        "implicit_pullback_flops_proxy_maximum_per_target": max(implicit_pullback_flops),
         "counted_flops_mean_per_target": float(np.mean(counted_flops)),
         "counted_flops_maximum_per_target": max(counted_flops),
     }
@@ -385,53 +446,50 @@ def run_task(repo_root: Path, task: PaperBenchmarkTask) -> dict[str, Any]:
     train = _cast_split(prepared.train, PREDICTION_DTYPE)
     test = _cast_split(prepared.test, PREDICTION_DTYPE)
 
-    prediction_records: dict[str, tuple[ScalarPrediction, float]] = {}
-    for label, predictor in (
-        (
-            "TERA-20",
-            lambda: predict_released_tera(
-                train,
-                test.X,
-                parameters,
-                m=TERA_PREDICT_M,
-            ),
-        ),
-        (
-            "ORBIT-20",
-            lambda: predict_orbit(
-                train,
-                test.X,
-                parameters,
-                m=TERA_PREDICT_M,
-                cg_tolerance=ORBIT_CG_TOLERANCE,
-                cg_max_iterations=ORBIT_CG_MAX_ITERATIONS,
-                use_preconditioner=True,
-            ),
-        ),
-        (
-            "ORBIT-30",
-            lambda: predict_orbit(
-                train,
-                test.X,
-                parameters,
-                m=ORBIT_CANDIDATE_M,
-                cg_tolerance=ORBIT_CG_TOLERANCE,
-                cg_max_iterations=ORBIT_CG_MAX_ITERATIONS,
-                use_preconditioner=True,
-            ),
-        ),
+    prediction_records: dict[str, tuple[ScalarPrediction, torch.Tensor, float]] = {}
+    started = time.perf_counter()
+    tera_prediction, tera_gradient = predict_released_tera_with_mean_gradient(
+        train,
+        test.X,
+        parameters,
+        m=TERA_PREDICT_M,
+    )
+    prediction_records["TERA-20"] = (
+        tera_prediction,
+        tera_gradient,
+        time.perf_counter() - started,
+    )
+    for label, m in (
+        ("ORBIT-20", TERA_PREDICT_M),
+        ("ORBIT-30", ORBIT_CANDIDATE_M),
     ):
         started = time.perf_counter()
-        prediction = predictor()
-        prediction_records[label] = (prediction, time.perf_counter() - started)
+        prediction = predict_orbit(
+            train,
+            test.X,
+            parameters,
+            m=m,
+            cg_tolerance=ORBIT_CG_TOLERANCE,
+            cg_max_iterations=ORBIT_CG_MAX_ITERATIONS,
+            use_preconditioner=True,
+            include_mean_gradient=True,
+        )
+        if prediction.details is None or prediction.details.mean_gradient is None:
+            raise RuntimeError("ORBIT did not return its posterior-mean gradient")
+        prediction_records[label] = (
+            prediction,
+            prediction.details.mean_gradient,
+            time.perf_counter() - started,
+        )
 
     tera_prediction = prediction_records["TERA-20"][0]
     orbit_same = prediction_records["ORBIT-20"][0]
+    orbit_same_gradient = prediction_records["ORBIT-20"][1]
     tera_resources = _tera_resource_summary(TERA_PREDICT_M)
 
     arms: dict[str, Any] = {}
-    for label, (prediction, seconds) in prediction_records.items():
-        arm = _prediction_metrics(prediction, test.value)
+    for label, (prediction, mean_gradient, seconds) in prediction_records.items():
+        arm = _prediction_metrics(prediction, mean_gradient, test.value, test.gradient)
         arm["prediction_seconds_descriptive_only"] = seconds
         if label == "TERA-20":
             arm["analytic_resources"] = tera_resources
@@ -483,10 +541,13 @@ def run_task(repo_root: Path, task: PaperBenchmarkTask) -> dict[str, Any]:
             "prediction_dtype": str(PREDICTION_DTYPE).removeprefix("torch."),
             "orbit_cg_tolerance": ORBIT_CG_TOLERANCE,
             "orbit_cg_max_iterations": ORBIT_CG_MAX_ITERATIONS,
-            "candidate_hypothesis": "ORBIT-30 improves RMSE and NLL over TERA-20 under both analytic resource proxies",
+            "gradient_definition": "gradient_of_scalar_posterior_mean",
+            "value_nll_variance": "observation_variance",
+            "candidate_hypothesis": "ORBIT-30 improves value RMSE, value NLL, and gradient RMSE over TERA-20 under both analytic resource proxies",
         },
         "learned_parameters": _parameters_record(parameters),
         "fit_seconds_descriptive_only": fit_seconds,
+        "fit_seconds_per_epoch_descriptive_only": fit_seconds / TERA_TRAIN_EPOCHS,
         "training_history": [
             {key: float(value) for key, value in row.items()} for row in model.training_history
         ],
@@ -497,6 +558,9 @@ def run_task(repo_root: Path, task: PaperBenchmarkTask) -> dict[str, Any]:
             ),
             "maximum_absolute_latent_variance_difference": float(
                 (tera_prediction.latent_variance - orbit_same.latent_variance).abs().max()
+            ),
+            "maximum_absolute_mean_gradient_difference": float(
+                (tera_gradient - orbit_same_gradient).abs().max()
             ),
         },
         "candidate_resource_match": {
@@ -536,7 +600,7 @@ def write_result(output_root: Path, task: PaperBenchmarkTask, result: dict[str, 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--task-index", type=int, required=True)
-    parser.add_argument("--output-root", type=Path, default=Path("runs/paper_nbody_v1"))
+    parser.add_argument("--output-root", type=Path, default=Path("runs/paper_nbody_v2"))
     args = parser.parse_args()
 
     torch.set_num_threads(8)

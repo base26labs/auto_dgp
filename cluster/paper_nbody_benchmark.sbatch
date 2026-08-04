@@ -22,7 +22,7 @@ export CUDA_VISIBLE_DEVICES=""
 
 readonly EXPECTED_TASK_COUNT=12
 REPO_ROOT=${PAPER_NBODY_REPO_ROOT:-/projects/lucasbao/tengcc/auto_dgp2}
-OUTPUT_ROOT=${PAPER_NBODY_OUTPUT_ROOT:-${REPO_ROOT}/runs/paper_nbody_v1}
+OUTPUT_ROOT=${PAPER_NBODY_OUTPUT_ROOT:-${REPO_ROOT}/runs/paper_nbody_v2}
 PYTHON_BIN=${REPO_ROOT}/.venv/bin/python
 
 if [[ ${SLURM_CPUS_PER_TASK:-} != 8 ]]; then

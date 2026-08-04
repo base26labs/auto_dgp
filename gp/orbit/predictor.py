@@ -43,6 +43,15 @@ class LocalPrediction:
 
 
 @dataclass(frozen=True)
+class LocalValueGradientPrediction:
+    """One local value prediction and the gradient of its posterior mean."""
+
+    prediction: LocalPrediction
+    mean_gradient: torch.Tensor
+    adjoint_solve: CGResult
+
+
+@dataclass(frozen=True)
 class MarginalPredictions:
     mean: torch.Tensor
     variance: torch.Tensor
@@ -63,6 +72,12 @@ class MarginalPredictions:
     mean_error_upper_bounds: torch.Tensor | None = None
     conditional_observation_norms: torch.Tensor | None = None
     mean_solve_certified: torch.Tensor | None = None
+    mean_gradient: torch.Tensor | None = None
+    adjoint_iterations: torch.Tensor | None = None
+    adjoint_operator_matvecs: torch.Tensor | None = None
+    adjoint_preconditioner_applications: torch.Tensor | None = None
+    adjoint_relative_residuals: torch.Tensor | None = None
+    adjoint_converged: torch.Tensor | None = None
 
 
 @dataclass(frozen=True)
@@ -414,9 +429,10 @@ def _build_local_value_system_impl(
             raise ValueError("precomputed geometry eigenvalues have an incompatible shape")
         if geometry.discarded_eigenvalue_sum.shape != ():
             raise ValueError("precomputed discarded eigenvalue sum must be scalar")
-        if bool((geometry.eigenvalues <= 0.0).any().item()) or float(
-            geometry.discarded_eigenvalue_sum
-        ) < 0.0:
+        if (
+            bool((geometry.eigenvalues <= 0.0).any().item())
+            or float(geometry.discarded_eigenvalue_sum) < 0.0
+        ):
             raise ValueError("precomputed geometry spectrum must be nonnegative")
     # Kernel coefficients continue to use the full geometry in approximate-rank
     # mode; only the represented observation basis is truncated.
@@ -828,6 +844,109 @@ def predict_local_value(
     )
 
 
+def predict_local_value_and_mean_gradient(
+    x_condition: torch.Tensor,
+    value_condition: torch.Tensor,
+    gradient_condition: torch.Tensor,
+    x_target: torch.Tensor,
+    *,
+    lengthscale: torch.Tensor,
+    outputscale: float | torch.Tensor,
+    value_noise_variance: float | torch.Tensor,
+    gradient_noise_variance: float | torch.Tensor,
+    kernel: str,
+    gradient_noise_model: str = "iid",
+    rank: int | None = None,
+    relative_rank_tolerance: float | None = None,
+    rank_epsilon: float | torch.Tensor | None = None,
+    absolute_rank_cutoff: float | torch.Tensor | None = None,
+    cg_tolerance: float = 1e-6,
+    cg_max_iterations: int | None = None,
+    use_preconditioner: bool = True,
+    function_jitter: float = 1e-8,
+    reduced_jitter: float = 1e-8,
+) -> LocalValueGradientPrediction:
+    """Predict a value and differentiate its local posterior mean implicitly.
+
+    The primal and adjoint CG solves run without an autograd tape.  The returned
+    gradient uses ``A w = b`` and ``A.T u = h`` to differentiate
+    ``base_mean + w.T h`` as ``d(base_mean) + w.T dh + u.T(db - dA w)``.
+    Neighbour selection is intentionally outside this function and therefore
+    treated as piecewise constant, matching TERA's gradient benchmark.
+    """
+
+    with torch.enable_grad():
+        differentiable_target = x_target.detach().clone().requires_grad_(True)
+        system = build_local_value_system(
+            x_condition,
+            value_condition,
+            gradient_condition,
+            differentiable_target,
+            lengthscale=lengthscale,
+            outputscale=outputscale,
+            value_noise_variance=value_noise_variance,
+            gradient_noise_variance=gradient_noise_variance,
+            kernel=kernel,
+            gradient_noise_model=gradient_noise_model,
+            rank=rank,
+            relative_rank_tolerance=relative_rank_tolerance,
+            rank_epsilon=rank_epsilon,
+            absolute_rank_cutoff=absolute_rank_cutoff,
+            function_jitter=function_jitter,
+            reduced_jitter=reduced_jitter,
+            build_preconditioner=use_preconditioner,
+        )
+        with torch.no_grad():
+            prediction = solve_local_value_system(
+                system,
+                tolerance=cg_tolerance,
+                max_iterations=cg_max_iterations,
+                use_preconditioner=use_preconditioner,
+            )
+            if system.geometry.rank == 0:
+                adjoint_solve = prediction.solve
+            else:
+                if system.operator is None:
+                    raise RuntimeError("nonzero-rank system is missing its operator")
+                preconditioner = system.preconditioner if use_preconditioner else None
+                adjoint_solve = solve_reduced_cg(
+                    system.operator,
+                    system.conditional_observation_functional,
+                    tolerance=cg_tolerance,
+                    max_iterations=cg_max_iterations,
+                    preconditioner=preconditioner,
+                    operator_norm_upper_bound=system.operator_norm_upper_bound,
+                )
+
+        if system.geometry.rank == 0:
+            differentiable_mean = system.base_mean
+        else:
+            if system.operator is None:
+                raise RuntimeError("nonzero-rank system is missing its operator")
+            primal = prediction.solve.solution.detach()
+            adjoint = adjoint_solve.solution.detach()
+            primal_residual_expression = system.conditional_cross - system.operator.matmul(primal)
+            differentiable_mean = system.base_mean
+            differentiable_mean = differentiable_mean + torch.dot(
+                primal,
+                system.conditional_observation_functional,
+            )
+            differentiable_mean = differentiable_mean + torch.dot(
+                adjoint,
+                primal_residual_expression,
+            )
+        mean_gradient = torch.autograd.grad(
+            differentiable_mean,
+            differentiable_target,
+        )[0].squeeze(0)
+
+    return LocalValueGradientPrediction(
+        prediction=prediction,
+        mean_gradient=mean_gradient.detach(),
+        adjoint_solve=adjoint_solve,
+    )
+
+
 def predict_marginal_values(
     x_train: torch.Tensor,
     value_train: torch.Tensor,
@@ -850,6 +969,7 @@ def predict_marginal_values(
     use_preconditioner: bool = True,
     function_jitter: float = 1e-8,
     reduced_jitter: float = 1e-8,
+    include_mean_gradient: bool = False,
 ) -> MarginalPredictions:
     """Predict independent local marginals using nearest neighbours.
 
@@ -902,29 +1022,46 @@ def predict_marginal_values(
         neighbours = neighbour_indices
 
     predictions = []
+    mean_gradients = []
+    adjoint_solves = []
     for target, indices in zip(x_eval, neighbours, strict=True):
-        predictions.append(
-            predict_local_value(
+        prediction_kwargs = {
+            "lengthscale": lengthscale,
+            "outputscale": outputscale,
+            "value_noise_variance": value_noise_variance,
+            "gradient_noise_variance": gradient_noise_variance,
+            "kernel": kernel,
+            "gradient_noise_model": gradient_noise_model,
+            "rank": rank,
+            "relative_rank_tolerance": relative_rank_tolerance,
+            "rank_epsilon": rank_epsilon,
+            "cg_tolerance": cg_tolerance,
+            "cg_max_iterations": cg_max_iterations,
+            "use_preconditioner": use_preconditioner,
+            "function_jitter": function_jitter,
+            "reduced_jitter": reduced_jitter,
+        }
+        if include_mean_gradient:
+            result = predict_local_value_and_mean_gradient(
                 x_train[indices],
                 value_train[indices],
                 gradient_train[indices],
                 target.unsqueeze(0),
-                lengthscale=lengthscale,
-                outputscale=outputscale,
-                value_noise_variance=value_noise_variance,
-                gradient_noise_variance=gradient_noise_variance,
-                kernel=kernel,
-                gradient_noise_model=gradient_noise_model,
-                rank=rank,
-                relative_rank_tolerance=relative_rank_tolerance,
-                rank_epsilon=rank_epsilon,
-                cg_tolerance=cg_tolerance,
-                cg_max_iterations=cg_max_iterations,
-                use_preconditioner=use_preconditioner,
-                function_jitter=function_jitter,
-                reduced_jitter=reduced_jitter,
+                **prediction_kwargs,
             )
-        )
+            predictions.append(result.prediction)
+            mean_gradients.append(result.mean_gradient)
+            adjoint_solves.append(result.adjoint_solve)
+        else:
+            predictions.append(
+                predict_local_value(
+                    x_train[indices],
+                    value_train[indices],
+                    gradient_train[indices],
+                    target.unsqueeze(0),
+                    **prediction_kwargs,
+                )
+            )
 
     return MarginalPredictions(
         mean=torch.stack([prediction.mean for prediction in predictions]),
@@ -993,5 +1130,47 @@ def predict_marginal_values(
         ),
         finite_precision_variance_corrections=torch.stack(
             [prediction.finite_precision_variance_correction for prediction in predictions]
+        ),
+        mean_gradient=torch.stack(mean_gradients) if include_mean_gradient else None,
+        adjoint_iterations=(
+            torch.tensor(
+                [solve.iterations for solve in adjoint_solves],
+                device=x_train.device,
+            )
+            if include_mean_gradient
+            else None
+        ),
+        adjoint_operator_matvecs=(
+            torch.tensor(
+                [solve.operator_matvecs for solve in adjoint_solves],
+                device=x_train.device,
+            )
+            if include_mean_gradient
+            else None
+        ),
+        adjoint_preconditioner_applications=(
+            torch.tensor(
+                [solve.preconditioner_applications for solve in adjoint_solves],
+                device=x_train.device,
+            )
+            if include_mean_gradient
+            else None
+        ),
+        adjoint_relative_residuals=(
+            torch.tensor(
+                [solve.relative_residual for solve in adjoint_solves],
+                device=x_train.device,
+                dtype=x_train.dtype,
+            )
+            if include_mean_gradient
+            else None
+        ),
+        adjoint_converged=(
+            torch.tensor(
+                [solve.converged for solve in adjoint_solves],
+                device=x_train.device,
+            )
+            if include_mean_gradient
+            else None
         ),
     )

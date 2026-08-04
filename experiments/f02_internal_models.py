@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
@@ -449,6 +450,56 @@ def predict_released_tera(
     )
 
 
+def predict_released_tera_with_mean_gradient(
+    train: TensorConfirmatorySplit,
+    x_eval: torch.Tensor,
+    parameters: FrozenTERAParameters,
+    *,
+    m: int,
+    gradient_chunk_size: int = 16,
+) -> tuple[ScalarPrediction, torch.Tensor]:
+    """Predict released TERA marginals and differentiate its posterior mean."""
+
+    x_eval = _validated_eval(train, x_eval)
+    if gradient_chunk_size <= 0:
+        raise ValueError("gradient_chunk_size must be positive")
+    if x_eval.shape[0] == 0:
+        return _empty_prediction(x_eval, parameters), x_eval.new_empty(x_eval.shape)
+
+    predictor = build_released_tera_predictor(train, parameters, m=m)
+    prediction = predictor.predict_f_marginals(x_eval)
+    variance_floor = torch.finfo(prediction.var.dtype).eps
+    if bool((prediction.var == variance_floor).any().item()):
+        raise RuntimeError(
+            "released TERA variance equals its dtype epsilon clipping floor; "
+            "unclipped variance positivity cannot be certified"
+        )
+
+    from gp.tera import _batched_grads
+
+    gradient_model = SimpleNamespace(
+        predictor=predictor,
+        m=m,
+        gradient_noise_model=parameters.gradient_noise_model,
+    )
+    mean_gradient = _batched_grads(
+        gradient_model,
+        x_eval,
+        x_eval.shape[0],
+        chunk=gradient_chunk_size,
+    )
+    return (
+        _scalar_prediction(
+            prediction.mean,
+            prediction.var,
+            parameters,
+            released_variance_epsilon_floor=float(variance_floor),
+            released_variance_epsilon_floor_inactive=True,
+        ),
+        mean_gradient,
+    )
+
+
 def predict_orbit(
     train: TensorConfirmatorySplit,
     x_eval: torch.Tensor,
@@ -464,6 +515,7 @@ def predict_orbit(
     use_preconditioner: bool = True,
     function_jitter: float = 1e-8,
     reduced_jitter: float = 1e-8,
+    include_mean_gradient: bool = False,
 ) -> ScalarPrediction:
     """Predict ORBIT marginals with exactly TERA's frozen kernel/noise state."""
 
@@ -491,6 +543,7 @@ def predict_orbit(
         use_preconditioner=use_preconditioner,
         function_jitter=function_jitter,
         reduced_jitter=reduced_jitter,
+        include_mean_gradient=include_mean_gradient,
     )
     return _scalar_prediction(details.mean, details.variance, parameters, details=details)
 
@@ -579,6 +632,7 @@ __all__ = [
     "freeze_tera_parameters",
     "predict_orbit",
     "predict_released_tera",
+    "predict_released_tera_with_mean_gradient",
     "predict_value_only_local_gp",
     "prepared_split_to_tensors",
 ]

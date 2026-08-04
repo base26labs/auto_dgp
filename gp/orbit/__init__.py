@@ -18,10 +18,12 @@ from gp.orbit.operator import (
 )
 from gp.orbit.predictor import (
     LocalPrediction,
+    LocalValueGradientPrediction,
     LocalValueSystem,
     MarginalPredictions,
     build_local_value_system,
     predict_local_value,
+    predict_local_value_and_mean_gradient,
     predict_marginal_values,
     solve_local_value_system,
 )
@@ -30,6 +32,7 @@ __all__ = [
     "CGResult",
     "LocalGeometry",
     "LocalPrediction",
+    "LocalValueGradientPrediction",
     "LocalValueSystem",
     "MarginalPredictions",
     "OrthonormalReducedOperator",
@@ -40,6 +43,7 @@ __all__ = [
     "build_local_value_system",
     "compute_posterior_certificate",
     "predict_local_value",
+    "predict_local_value_and_mean_gradient",
     "predict_marginal_values",
     "solve_reduced_cg",
     "solve_local_value_system",

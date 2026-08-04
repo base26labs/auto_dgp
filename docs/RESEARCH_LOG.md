@@ -7,6 +7,29 @@ scope downgrades are reported in place, loudly, naming the check that failed.
 
 ---
 
+## 2026-08-04 — Paper N-body v2 full-gradient and NLL path: **implemented locally, not submitted**
+
+The paper-aligned runner now reports both primary N-body metrics, value RMSE and full-gradient RMSE,
+plus the preregistered repository diagnostic value NLL. Value NLL is computed from predictive
+observation variance, including the fitted value-noise variance; no gradient NLL is claimed because
+the benchmark does not construct a full gradient predictive covariance. Both methods define the
+gradient as the derivative of their scalar posterior mean with nearest-neighbour membership held
+piecewise constant.
+
+ORBIT differentiates its local conditional with an implicit adjoint system. Its primal and adjoint
+CG solves run without retaining their iteration tapes, and both solves must meet the fixed `1e-10`
+fresh-residual tolerance. Actual matvec and preconditioner counts from both solves are charged to the
+resource proxy, together with fixed conservative factor-four state and reverse-pass allowances. The
+registered win rule now requires lower value RMSE, value NLL, and gradient RMSE on every seed task
+and every dataset mean, in addition to convergence and resource matching.
+
+The compact local suite passed 28 tests. A two-target, 64-training-row, `m=20`, float64 smoke on the
+non-reported two-particle data found a maximum ORBIT implicit-gradient versus TERA difference of
+`7.58e-9`; both adjoint solves converged. This checks implementation consistency only, not predictive
+superiority. No paper dataset array was run and no Slurm job was submitted or cancelled.
+
+---
+
 ## 2026-08-04 — Paper N-body TERA/ORBIT runner: **implemented locally, not submitted**
 
 The compact paper-aligned benchmark is now executable as 12 tasks: the authors' three seeds crossed

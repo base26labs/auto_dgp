@@ -67,14 +67,30 @@ def test_paper_aggregate_reports_the_registered_joint_win(tmp_path: Path) -> Non
                 "seed": task.seed,
             },
             "arms": {
-                "TERA-20": {"value_rmse": 1.0, "value_nll": 2.0},
-                "ORBIT-20": {"value_rmse": 1.0, "value_nll": 2.0},
-                "ORBIT-30": {"value_rmse": 0.9, "value_nll": 1.9},
+                "TERA-20": {
+                    "value_rmse": 1.0,
+                    "value_nll": 2.0,
+                    "value_nll_variance": "observation_variance",
+                    "gradient_rmse": 3.0,
+                },
+                "ORBIT-20": {
+                    "value_rmse": 1.0,
+                    "value_nll": 2.0,
+                    "value_nll_variance": "observation_variance",
+                    "gradient_rmse": 3.0,
+                },
+                "ORBIT-30": {
+                    "value_rmse": 0.9,
+                    "value_nll": 1.9,
+                    "value_nll_variance": "observation_variance",
+                    "gradient_rmse": 2.9,
+                },
             },
             "candidate_resource_match": {"passes_both": True},
             "same_m_control": {
                 "maximum_absolute_mean_difference": 1e-12,
                 "maximum_absolute_latent_variance_difference": 1e-12,
+                "maximum_absolute_mean_gradient_difference": 1e-10,
             },
         }
         (tmp_path / f"task-{task.task_index:03d}.json").write_text(
