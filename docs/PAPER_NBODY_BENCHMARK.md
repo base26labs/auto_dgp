@@ -28,6 +28,19 @@ Run the released TERA baseline and ORBIT on identical training rows, test rows, 
 and prediction targets. Method-specific approximation sizes remain explicit; they must not be
 silently equated with DSoftKI's 512 interpolation points.
 
+The registered comparison is deliberately small:
+
+- `TERA-20`: released TERA training and dense prediction at its native `m=20`;
+- `ORBIT-20`: a same-neighbour control using the exact same learned state; and
+- `ORBIT-30`: the fixed resource-expansion hypothesis.
+
+The candidate succeeds only if `ORBIT-30` has lower value RMSE and value NLL than `TERA-20` on every
+seed task and every dataset mean, all solves converge, and its maximum per-target structured state
+and counted-operation proxies remain within the corresponding `TERA-20` dense envelopes. This is a
+simple deterministic decision rule, not a statistical-significance claim. `m=30` is fixed before
+reading any of the four paper test sets. Float64 ORBIT solves use a fixed `1e-10` relative residual
+tolerance; the resulting iterations are charged to the operation proxy.
+
 The primary table reports value RMSE and gradient RMSE for each particle count as mean and standard
 deviation over the three seeds. If a method does not yet expose a valid full-gradient prediction,
 mark that cell unsupported rather than substituting a different metric. Value NLL may be retained as
@@ -40,10 +53,23 @@ holdout release is needed; the reported three-seed scores are the benchmark resu
 
 ## Compute and tests
 
-Each scheduled task uses one shared `short`-partition node, one task, exactly 8 CPUs, no GPU, and no
-exclusive allocation. Set the common BLAS/OpenMP thread controls to 8. Use only a deterministic
+Each scheduled task uses one nonexclusive `short`-partition allocation, one task, exactly 8 CPUs, no
+GPU, and no exclusive allocation. The cluster's `select/cons_tres` configuration shares nodes by
+allocated cores and memory; do not request CPU oversubscription. Set the common BLAS/OpenMP thread
+controls to 8. Use only a deterministic
 data/split smoke test and a result-schema/metric smoke test; numerical kernel and ORBIT unit tests
 remain separate from the benchmark.
+
+The implementation is:
+
+- `cluster/paper_nbody_data.sbatch`: four shared-CPU dataset-generation tasks;
+- `cluster/paper_nbody_benchmark.sbatch`: the exact 12-task particle/seed grid;
+- `experiments/paper_nbody_benchmark.py`: one task and one immutable JSON result; and
+- `experiments/paper_nbody_aggregate.py`: complete-grid aggregation and the fixed decision rule.
+
+These files define runnable commands but do not authorize `sbatch`. The current checkout must be
+committed and deployed with its environment before any array is submitted, and the ignored `runs/`
+directory must already exist so Slurm can open its log paths.
 
 Reference: <https://arxiv.org/abs/2505.09134> and the authors' released benchmark scripts at
 <https://github.com/base26labs/dsoftki_gp>.

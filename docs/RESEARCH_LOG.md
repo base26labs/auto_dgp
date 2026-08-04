@@ -7,6 +7,34 @@ scope downgrades are reported in place, loudly, naming the check that failed.
 
 ---
 
+## 2026-08-04 — Paper N-body TERA/ORBIT runner: **implemented locally, not submitted**
+
+The compact paper-aligned benchmark is now executable as 12 tasks: the authors' three seeds crossed
+with the four reported N-body sizes. Each task uses the paper's normalize-before-split 90/10 data
+path, fits released TERA once at its native `m=20` configuration, and evaluates `TERA-20`, the
+same-neighbour `ORBIT-20` control, and the fixed `ORBIT-30` resource-expansion hypothesis on all 950
+test rows in float64 prediction arithmetic. The aggregate requires lower RMSE and NLL for ORBIT-30
+on every seed task and every dataset mean, plus convergence and analytic state/flop resource matches;
+it makes no wall-clock, gradient, or significance claim.
+
+Both data generation (4 tasks) and benchmark execution (12 tasks) now have nonexclusive shared-node,
+8-CPU, no-GPU Slurm entries. A live read-only cluster check showed `select/cons_tres` with
+`CR_CORE_MEMORY` and `short: OverSubscribe=NO`, so the entries request neither `--exclusive` nor
+`--oversubscribe`. The two pure benchmark tests and one aggregate test pass under an
+available Python 3.10 scientific environment; 24 existing TERA/ORBIT adapter tests also pass. The
+default login Python is 3.9 and cannot import the repository's existing `dataclass(slots=True)` code,
+so it was not used as test evidence. Only the two-particle smoke dataset exists in this checkout;
+the four reported paper datasets must be generated before execution. No Slurm job was submitted or
+cancelled.
+
+A two-target, 64-training-row integration smoke on the non-reported two-particle data exposed why
+the solve tolerance is part of the scientific protocol: at `1e-5`, same-`m` TERA/ORBIT means differed
+by about `6.68e-4`; at `1e-10`, the maximum mean and latent-variance differences fell to about
+`8.68e-11` and `2.78e-16`, respectively, with both ORBIT arms converged. The benchmark therefore
+uses `1e-10`; its extra iterations count against ORBIT's analytic resource proxy.
+
+---
+
 ## 2026-08-04 — Predictive evaluation simplified to the paper benchmark
 
 The active predictive evaluation now follows the DSoftKI paper's toy N-body benchmark: reported
