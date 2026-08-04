@@ -60,9 +60,11 @@ CPU-float64 solve, source-fp32 neighbours and cutoff, zero start, tolerance and 
 hash-derived probes, reverse permutation, adjacent Givens support rotation, zero-coordinate
 augmentation, and native-fp64 cutoff comparison.  The immutable target artifact now accepts matching
 full-q and stress evidence only beside its CPU-float64 ORBIT target and preserves their independent
-identities.  Strict 122-slot intake and aggregate, discovery/locked-holdout threshold workflow, and
-the probe Slurm runner remain incomplete.  This checkpoint therefore still authorizes no Slurm
-submission and no confirmatory access.
+identities.  A canonical task index now requires all 100 target positions in both registered dtypes,
+binds the 200 identity-derived target files by raw SHA-256, and checks auxiliary-arm counts against
+the work plan.  Strict 122-directory intake and aggregate, discovery/locked-holdout threshold
+workflow, and the probe Slurm runner remain incomplete.  This checkpoint therefore still authorizes
+no Slurm submission and no confirmatory access.
 
 The earlier v3 artifact from job 2810629 motivated the strata and fault tests but is excluded from
 fitting numerical thresholds.  In particular, its observed errors may not be rounded upward and
@@ -413,6 +415,14 @@ target, including its main N0 hashes and neighbour rows.  Stress must match the 
 target while retaining its separate stress-neighbour binding, N0 grid/stratum hashes, solve policy,
 five diagnostics, and both source-cutoff and native-fp64 projectors.  Canonical bytes detach all
 nested mutable evidence and bind the resulting record by raw SHA-256.
+
+Each probe task stores those target records as 200 separate canonical files and binds them through a
+small task index.  The index order is target position 0 through 99, with fp32 then fp64 at each
+position.  It rejects missing or duplicate position/dtype pairs, cross-dtype target or neighbour
+identity drift, inconsistent grid/stratum hashes, auxiliary arms on fp32, incorrect support64/full-q
+stratum counts, and an absent or extra registered stress target.  The index also binds the fit
+payload/catalog, launch manifest, deployed source identity, and the public shared-CPU execution
+envelope without duplicating large numerical arrays.
 
 The three hashes live in a non-recursive execution envelope outside the canonical task record being
 hashed.  The scaffold CLI record alone is not this envelope and cannot be submitted directly.

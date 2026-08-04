@@ -10,6 +10,12 @@ import experiments.f02b_calibration_probe_execution as execution_module
 from cluster.f02b_calibration_grid import probe_task_for_index
 from experiments.f02_design import EVALUATION_TIME_INDICES
 from experiments.f02_internal_models import FrozenTERAParameters, TensorConfirmatorySplit
+from experiments.f02b_calibration_contract import (
+    F02_CATALOG_SHA256,
+    MINIMUM_HOST_MEMORY_BYTES,
+    WALLTIME_SECONDS,
+    canonical_json_bytes,
+)
 from experiments.f02b_calibration_full_q import (
     FULL_Q_ARM_NAMES,
     _assemble_from_released_primitives,
@@ -54,6 +60,14 @@ from experiments.f02b_calibration_probe_execution import (
     registered_orbit_tolerances,
     scan_registered_source_geometry,
     select_registered_orbit_strata,
+)
+from experiments.f02b_calibration_probe_task_artifact import (
+    PROBE_TARGET_ARTIFACT_COUNT,
+    ProbeTaskArtifactError,
+    build_canonical_probe_task_artifact,
+    build_probe_task_execution_envelope,
+    parse_canonical_probe_task_index,
+    validate_probe_task_artifact_pair,
 )
 from experiments.f02b_calibration_stress import (
     build_registered_stress_inputs,
@@ -1220,4 +1234,99 @@ def test_canonical_target_artifact_parser_rejects_noncanonical_duplicate_and_has
         parse_canonical_probe_target_artifact(
             artifact.payload_bytes,
             expected_sha256="0" * 64,
+        )
+
+
+def test_probe_task_index_binds_the_complete_registered_target_set() -> None:
+    arm32 = _synthetic_arm(torch.float32)
+    arm64 = promote_registered_orbit_arm_to_float64(arm32)
+    geometries, strata = _geometry_and_strata(arm32)
+    targets = []
+    for position, geometry in enumerate(geometries):
+        orbit32 = execute_registered_orbit_target(arm32, geometry, strata)
+        orbit64 = execute_registered_orbit_target(arm64, geometry, strata)
+        support64 = (
+            execute_registered_support64_target(arm64, geometry, strata)
+            if position in strata.selected_target_positions
+            else None
+        )
+        targets.extend(
+            [
+                build_canonical_probe_target_artifact(orbit32),
+                build_canonical_probe_target_artifact(orbit64, support64=support64),
+            ]
+        )
+
+    deployment = {
+        "source_commit": "1" * 40,
+        "source_tree": "2" * 40,
+        "tera_gitlink": "3" * 40,
+        "pyproject_sha256": "4" * 64,
+        "uv_lock_sha256": "5" * 64,
+        "catalog_generation_commit": "6" * 40,
+        "catalog_generation_tree": "7" * 40,
+        "catalog_sha256": F02_CATALOG_SHA256,
+    }
+    artifact = build_canonical_probe_task_artifact(
+        arm32.work_plan.task_index,
+        targets,
+        fit_payload_raw_sha256="8" * 64,
+        fit_catalog_raw_sha256="9" * 64,
+        fit_catalog_integrity_payload_sha256="a" * 64,
+        fit_catalog_cohort_identity_sha256="b" * 64,
+        launch_manifest_raw_sha256="c" * 64,
+        probe_deployment=deployment,
+    )
+    parsed = parse_canonical_probe_task_index(
+        artifact.index_bytes,
+        expected_sha256=artifact.index_sha256,
+    )
+
+    assert len(artifact.targets) == PROBE_TARGET_ARTIFACT_COUNT
+    assert parsed["target_artifact_count"] == PROBE_TARGET_ARTIFACT_COUNT
+    assert parsed["targets"][0]["filename"] == "target-000-float32.json"
+    assert parsed["targets"][-1]["filename"] == "target-099-float64.json"
+    assert sum(item["support64_present"] for item in parsed["targets"]) == 2
+    assert not any(item["full_q_present"] for item in parsed["targets"])
+    assert not any(item["stress_present"] for item in parsed["targets"])
+
+    envelope = build_probe_task_execution_envelope(
+        arm32.work_plan.task_index,
+        artifact,
+        output_root="/tmp/f02b-probe-stage",
+        runtime_allocation={
+            "exclusive_node": False,
+            "requested_gpu_count": 0,
+            "visible_gpu_count": 0,
+            "visible_gpu_models": [],
+            "visible_gpu_memory_bytes": [],
+            "requested_cpus_per_task": 8,
+            "available_cpu_count": 8,
+            "available_host_memory_bytes": MINIMUM_HOST_MEMORY_BYTES,
+            "requested_walltime_seconds": WALLTIME_SECONDS,
+            "walltime_limit_seconds": WALLTIME_SECONDS,
+            "array_concurrency": 1,
+            "partition": "short",
+        },
+    )
+    validated_index, validated_envelope = validate_probe_task_artifact_pair(
+        artifact,
+        canonical_json_bytes(envelope),
+        output_root="/tmp/f02b-probe-stage",
+    )
+    assert validated_index == parsed
+    assert validated_envelope["canonical_record"]["runtime_allocation"][
+        "requested_cpus_per_task"
+    ] == 8
+
+    with pytest.raises(ProbeTaskArtifactError, match="exactly 200"):
+        build_canonical_probe_task_artifact(
+            arm32.work_plan.task_index,
+            targets[:-1],
+            fit_payload_raw_sha256="8" * 64,
+            fit_catalog_raw_sha256="9" * 64,
+            fit_catalog_integrity_payload_sha256="a" * 64,
+            fit_catalog_cohort_identity_sha256="b" * 64,
+            launch_manifest_raw_sha256="c" * 64,
+            probe_deployment=deployment,
         )

@@ -7,6 +7,23 @@ scope downgrades are reported in place, loudly, naming the check that failed.
 
 ---
 
+## 2026-08-04 — Canonical F02b 200-target task index: **implemented and locally verified**
+
+Each probe task now has a small canonical index over exactly 100 target positions times the two
+registered ORBIT dtypes.  Target files use identity-derived names, remain separate from the index,
+and are bound by raw SHA-256.  Before emission, the builder parses every target, matches fp32/fp64
+target and neighbour identities, requires one common source arm and main N0 grid/stratum identity,
+and enforces the registered support64, full-q, and stress counts.  It also binds the selected fit
+payload/catalog, launch manifest, probe deployment, and the shared 8-CPU public execution envelope.
+
+One complete synthetic resource-sweep task exercised all 200 target records and the index/envelope
+pair; removing one target was the single registered rejection check.  This remains integrity and
+mechanism evidence, not corpus accuracy, runtime, cost, or superiority evidence.  No corpus, labels,
+GPU, Slurm job, or confirmatory replica was accessed.  The filesystem-level 122-directory aggregate,
+threshold workflow, and authorized runner remain pending.
+
+---
+
 ## 2026-08-04 — F02b full-q/stress target artifact integration: **implemented and locally verified**
 
 The immutable target artifact schema is now v2.  A CPU-float64 ORBIT target can carry matching
