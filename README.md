@@ -22,6 +22,17 @@ Two reference points ground the loop:
 - **TERA** (`gp/tera`, a git submodule) — the best approximate GP baseline
   ([Seung & Katzfuss 2026](https://arxiv.org/abs/2606.02909); see [`docs/REFERENCES.md`](docs/REFERENCES.md)).
 
+The current research candidate is **ORBIT** (`gp/orbit`): an exact orthonormal, matrix-free form of
+TERA's target conditional with PCG and an exact-arithmetic residual-to-posterior-error certificate.
+It has passed
+algebraic controls but has **not** yet passed the predictive and matched-resource gates required to
+call it a better GP framework; see [`docs/ORBIT_METHOD.md`](docs/ORBIT_METHOD.md).
+
+Predictive evaluation now uses the compact protocol from the DSoftKI paper's toy N-body experiment:
+four reported particle counts, a 90/10 split, three seeds, and value/gradient RMSE. See
+[`docs/PAPER_NBODY_BENCHMARK.md`](docs/PAPER_NBODY_BENCHMARK.md). The earlier custom F02b calibration
+matrix is retained as numerical-development history and its pending arrays must not be submitted.
+
 Within the substrate, the loop's concrete objective is to beat these on value RMSE **and** calibration
 (NLL) under a fixed budget.
 
@@ -44,7 +55,10 @@ uv run python experiments/nbody_benchmark.py
 |------|------|
 | `gp/kernels`, `gp/cg`, `gp/exact`, `gp/common`, `gp/metrics` | the base exact derivative GP |
 | `gp/tera` | TERA baseline (wrapper here; upstream source is the `gp/tera/vendor` submodule) |
+| `gp/orbit` | ORBIT research candidate; matrix-free TERA conditionals and certificates |
 | `data/get_nbody.py` | N-body Hamiltonian dataset generator |
+| `data/generate_nbody_confirmatory.py` | leakage-free, fixed-mass, trajectory-grouped companion corpus |
+| `data/load_nbody_confirmatory.py` | fail-closed bundle verification and train-only preparation |
 | `experiments/` | benchmarks and experiments |
 | `tests/` | correctness tests (the factored kernel matvec == dense, CG == exact) |
 | `CLAUDE.md` | the research-loop rules and hygiene checklist |

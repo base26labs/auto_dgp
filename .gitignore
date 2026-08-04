@@ -1,5 +1,6 @@
 # large binary datasets (regenerate with data/get_nbody.py -- see docs/STARTUP.md)
 data/nbody/*.npz
+data/nbody_confirmatory_seed43/*.npz
 
 # per-run outputs (results.tsv stays untracked per CLAUDE.md loop rules)
 runs/

@@ -1,0 +1,86 @@
+{
+  "schema": "paper_nbody_v4_release_manifest_v1",
+  "status": "complete_registered_falsification",
+  "candidate": "ORBIT-G30",
+  "baseline": "TERA-20",
+  "beats_TERA_under_registered_rule": false,
+  "paper_reference": "https://arxiv.org/abs/2505.09134",
+  "code": {
+    "git_commit": "076315efdeef4492897651515eaeeed95e8dd863",
+    "git_tree": "992ee04b7048845b409de58ee722c80d8350abc6",
+    "tera_submodule": "b2382e10a045abca3d653ad58c4a2a9c1ca73458"
+  },
+  "cluster": {
+    "repository": "/projects/lucasbao/tengcc/auto_dgp2",
+    "data_array_job_id": "2814140",
+    "benchmark_array_job_id": "2814144",
+    "partition": "short",
+    "exclusive": false,
+    "nodes_per_task": 1,
+    "tasks_per_node": 1,
+    "cpus_per_task": 8,
+    "gpus_per_task": 0,
+    "thread_limit": 8,
+    "wall_clock_used_as_evidence": false,
+    "remote_result_root": "runs/paper_nbody_v4"
+  },
+  "protocol": {
+    "particle_counts": [4, 6, 8, 10],
+    "dimensions": [24, 36, 48, 60],
+    "seeds": [6535, 8830, 92357],
+    "rows_after_filter": 9500,
+    "train_fraction": 0.9,
+    "test_rows": 950,
+    "reported_metrics": ["value_rmse", "value_nll", "gradient_rmse"],
+    "value_nll_variance": "observation_variance_including_fitted_value_noise",
+    "paper_nbody_table_metrics": ["value_rmse", "gradient_rmse"],
+    "value_nll_is_user_requested_additional_metric": true
+  },
+  "datasets": {
+    "4": {
+      "shape": [9500, 24],
+      "sha256": "bd58d0a6e0cc05804222d61dccdfc23acc37c57606067511e24d371c81eb5cb1"
+    },
+    "6": {
+      "shape": [9500, 36],
+      "sha256": "e30cc973f8ad0c67ad96487cde0222e0425b40e65907bb765cf7b4d2fc99ab78"
+    },
+    "8": {
+      "shape": [9500, 48],
+      "sha256": "bdda6e6651bfe5634f8c81d7aa1fd7a295fb9787485ca77e8b630654acb670a8"
+    },
+    "10": {
+      "shape": [9500, 60],
+      "sha256": "95c3dd63b54f5d68e224339520ccda63481409ee9ca42dd68ebfe13996b6b93e"
+    }
+  },
+  "artifacts": {
+    "aggregate": {
+      "path": "runs/paper_nbody_v4/aggregate.json",
+      "sha256": "ef4c6cddb9fd749415acafd00592eeafac204de6ba0a1a145a668ec09fd52cd6"
+    },
+    "tasks": {
+      "task-000.json": "0ed6091029223bcfef73a08a658d4c772e00f20a6e2ee93da6b1ecf507e4dda3",
+      "task-001.json": "3f8f2f09f8ba70990cba21592199f2e6f65b9e3c7f17144072d8cd5195ee95e3",
+      "task-002.json": "943df3a10aa5ba83b050d58c327821f652f41975716849a5dc040443e7eb7145",
+      "task-003.json": "fba53e431f5ce7c5e375cfbdf24e9c6a5738843e9c4b7cb05a89f221b08b092d",
+      "task-004.json": "88bd15a39678370db2efe95e12859887b05339ed0f35f285cb6611b1441a0722",
+      "task-005.json": "cade25fcb2aa1315373f8d0b9b32efaf8ee5fced0e7096e568a09285af5028df",
+      "task-006.json": "daf49e03d117dd7ed90eca94940e66bca2eb1eba949ddc5d5df052595ca915b6",
+      "task-007.json": "58ca1a482e35e4644a160f404cc3998fa73a1012d10241961145807e21ef2d30",
+      "task-008.json": "0f4faf2d0acbfc588c6e8fb48fb22a2eacf77aadf1773add4eabd08e23a069a0",
+      "task-009.json": "bf5ebf19d0ae6d56e74530124877f1036559b39d6f5bb343bfdeef3db73434e0",
+      "task-010.json": "60f64195bd1d44c92ab7b66f39947b3b4e9c8d3ab5ced80b6d7dba9426b2dea1",
+      "task-011.json": "71ec2f9c02af87de54c2c58c6b3f5d2643074a53d8fb0fc5c281b4745402f440"
+    }
+  },
+  "aggregate_assessment": {
+    "lower_mean_all_three_metrics_on_every_dataset": false,
+    "resource_match_all_tasks": false,
+    "all_tasks_complete": true,
+    "all_primal_and_adjoint_solves_converged": true,
+    "state_proxy_match_all_tasks": true,
+    "metric_gate_passed_particle_counts": [6, 8],
+    "resource_gate_passed_particle_counts": [4]
+  }
+}

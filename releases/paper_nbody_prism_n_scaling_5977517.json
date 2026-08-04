@@ -1,0 +1,87 @@
+{
+  "schema": "paper_nbody_prism_n_scaling_release_v1",
+  "status": "complete",
+  "scope": "secondary_n_scaling_no_new_confirmatory_claim",
+  "candidate": "PRISM-GP-30/16",
+  "baseline": "TERA-20",
+  "protocol_path": "docs/PRISM_PAPER_NBODY_N_SCALING.md",
+  "dimension_confirmation_release": "releases/paper_nbody_prism_seed43_b66f60e.json",
+  "benchmark_git_commit": "5977517421243ef8bcd463cc71076fc92918a698",
+  "aggregate_git_commit": "fd0441081266f9cb85e44b4c216e411ea882ae50",
+  "cluster": {
+    "benchmark_job": "2815036",
+    "partition": "short",
+    "allocation": "shared",
+    "cpus_per_task": 8,
+    "gpu": false,
+    "exclusive": false,
+    "wall_clock_used_for_claim": false
+  },
+  "grid": {
+    "dataset_generation_seed": 43,
+    "fixed_n_particles": 10,
+    "fixed_dimension": 60,
+    "training_sizes": [1000, 2000, 4000, 8550],
+    "test_rows": 950,
+    "split_seeds": [6535, 8830, 92357],
+    "nested_training_prefixes": true,
+    "fixed_test_split_within_seed": true,
+    "data_sha256": "5833a22b74609b53683ab3ef1840aa2f7230279b13f28c0f284952e29796cf86"
+  },
+  "result": {
+    "remote_root": "runs/paper_nbody_prism_n_scaling_seed43_v1",
+    "aggregate_path": "runs/paper_nbody_prism_n_scaling_seed43_v1/aggregate.json",
+    "aggregate_sha256": "b0392544507d1aab4a9250ce01eef46c2dd08039ab505cbcc9e0b6e93ca78b67",
+    "task_count": 12,
+    "all_array_hashes_verified": true,
+    "maximum_fresh_relative_residual": 9.999231304069767e-11,
+    "maximum_flop_ratio_to_TERA_20": 0.74997,
+    "maximum_state_ratio_to_TERA_20": 0.1190625,
+    "full_n_arrays_byte_identical_to_dimension_confirmation": true
+  },
+  "assessment": {
+    "passes_pareto_rule_at_every_training_size": false,
+    "confirmatory_claim": false,
+    "statistical_significance_claimed": false,
+    "paired_PRISM_minus_TERA_mean": {
+      "1000": {
+        "value_rmse": 1.2325770034256797e-11,
+        "value_nll": -1.8592733871021967e-8,
+        "gradient_rmse": 6.298665293040055e-11,
+        "passes_descriptive_pareto_rule": false
+      },
+      "2000": {
+        "value_rmse": 1.8890172130229626e-8,
+        "value_nll": 1.2792408857838685e-5,
+        "gradient_rmse": -1.532757074418356e-5,
+        "passes_descriptive_pareto_rule": false
+      },
+      "4000": {
+        "value_rmse": -1.1146207475517163e-9,
+        "value_nll": -0.00015010701297768492,
+        "gradient_rmse": 9.248014740759203e-5,
+        "passes_descriptive_pareto_rule": false
+      },
+      "8550": {
+        "value_rmse": 1.285301541587014e-8,
+        "value_nll": -0.0008818668789234985,
+        "gradient_rmse": -0.0027377613007234145,
+        "passes_descriptive_pareto_rule": true
+      }
+    }
+  },
+  "task_artifact_sha256": [
+    {"task": 0, "json": "7053dec895ee3069072d4660b1f493fc1c3d4f3fca3dbce0a2bab537cf0de7db", "npz": "af09bbca0a3a935fd7f4667db2e9cc23c6dc90a42a945438cda5433c12f437e0"},
+    {"task": 1, "json": "8ba40a6567811ac6c6aa1de2598ee10d7fac123e008901e8428f5d5d1e6cc6b9", "npz": "5445df820ce46af7473f0717fc7254f063266c22005fbea2bff00633fbb8fd87"},
+    {"task": 2, "json": "1afb349b103de5ead53133c14a4d771c54d5cf96f061c8bbc9cff790ba58562a", "npz": "270100e6d90e0bf8260b93cf0f50ee170f6c57f565674479d4157516439b4e28"},
+    {"task": 3, "json": "30dc6d50a06d10814bbd92e0fe0a9a548a7ffef745ac5160c1d3a60766719fc8", "npz": "0ec5a160cde75b0b5e95088c2dac9d3070ed77fdcc582a382e669afd385253c9"},
+    {"task": 4, "json": "f80d14b1bcc11b461a557f8cd7210d5d3d747fece7f9279e6bc84d9266f7a23b", "npz": "13e9b7cdb18ecfbfa099c631097f53851a66d94573a37ef6413a5be2633a5740"},
+    {"task": 5, "json": "adf93ce8b7afa3bf908c55ed07f78af3d4a029bc985bfabbad0deab6d51b64cc", "npz": "e46f45788069929abca08ca0dbd4ad51c219aa289df5d825d33dedc94c99ddc7"},
+    {"task": 6, "json": "02cf5e6e2d587aeb01402dea6f11735f381d0cdedf878397fdb2892fac71813f", "npz": "3e50c25b78a755dde8647ebba4275c50967ebb8eace078e349df2c9ee54fba97"},
+    {"task": 7, "json": "e163b35c03b5c42158ded28acfe55bb3f99d733363f9ebc777c377cdcb198803", "npz": "61463d431964a0b4cfb0b44452cb85a88c5643768799d1d25659037db15ff896"},
+    {"task": 8, "json": "c08721b300e986040285bef2908912daea764ffa17f1f59bc6bc893c4887f9f7", "npz": "9c8fd7ada4839a7b56a0f5258436222ab2bf4feead01cbca6be846ca4fa84a90"},
+    {"task": 9, "json": "8fbbe33eee74fd106d95fe4125c468e4c35d334c64b8a07047d6b40e30869bce", "npz": "705e3f2a1f13468369df610047f2ce7cb620613c6f9aa72ec94bb2053602e05e"},
+    {"task": 10, "json": "e006baa7b17323a0bd16489d5e268e2ecb53e5c1b6c913b8d8a2b2d7090f032a", "npz": "50cd36f616c355966fc210b34b0353547cb9e530c7c753d80051a6770091aeb6"},
+    {"task": 11, "json": "1581742332c504346e81fdd66cba66a1ce2d19a4ffc133047ebda2f6d93d1d59", "npz": "ef495a58412e05683aa97a3b805caba9dc5d25d3791e05e0a9ef672afb2f3162"}
+  ]
+}

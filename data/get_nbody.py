@@ -22,6 +22,11 @@ import numpy as np
 from scipy.integrate import solve_ivp
 from tqdm import tqdm
 
+UPSTREAM_REPOSITORY = "https://github.com/base26labs/dsoftki_gp"
+UPSTREAM_COMMIT = "286234baa0dd6be225bbfb1bdbb416687ea70654"
+UPSTREAM_GET_NBODY_BLOB = "32f23c8c0f7263ef03026d4a3d34920ea3364cdc"
+GENERATOR_PROTOCOL = "dsoftki_released_pair_loop_nbody_v1"
+
 
 def hamiltonian(q, p, masses, G=1.0, softening=0.1):
     """
@@ -40,14 +45,15 @@ def hamiltonian(q, p, masses, G=1.0, softening=0.1):
     # Kinetic energy: T = sum_i |p_i|^2 / (2 * m_i)
     T = 0.5 * np.sum(p**2 / masses[:, None])
 
-    # Potential energy: V = -G * sum_{i<j} m_i * m_j / sqrt(r^2 + eps^2), Plummer softening.
-    # Vectorized over all particle pairs (broadcasting); the diagonal (self-pairs) is zeroed and
-    # the full ordered-pair sum is halved to recover sum_{i<j}.
-    diff = q[:, None, :] - q[None, :, :]  # (n, n, d)
-    r2 = np.sum(diff**2, axis=-1)  # (n, n)
-    inv = (masses[:, None] * masses[None, :]) / np.sqrt(r2 + softening**2)
-    np.fill_diagonal(inv, 0.0)
-    V = -0.5 * G * inv.sum()
+    # Keep the released DSoftKI generator's pair-loop order exactly.  A
+    # vectorized reduction is mathematically equivalent but changes floating
+    # summation order, which can alter a chaotic integrated trajectory.
+    n_particles = len(masses)
+    V = 0.0
+    for i in range(n_particles):
+        for j in range(i + 1, n_particles):
+            r = np.linalg.norm(q[i] - q[j])
+            V -= G * masses[i] * masses[j] / np.sqrt(r**2 + softening**2)
 
     return T + V
 
@@ -63,14 +69,17 @@ def hamiltonian_gradients(q, p, masses, G=1.0, softening=0.1):
     # dH/dp = p / m (velocity)
     dH_dp = p / masses[:, None]
 
-    # dH/dq = dV/dq with Plummer softening:
-    #   dH/dq_i = G * m_i * sum_{j != i} m_j * (q_i - q_j) / (|q_i - q_j|^2 + ε^2)^(3/2)
-    # Vectorized over all particle pairs (broadcasting); the diagonal (self-pairs) is zeroed.
-    diff = q[:, None, :] - q[None, :, :]  # (n, n, d) = q_i - q_j
-    r2 = np.sum(diff**2, axis=-1)  # (n, n)
-    coeff = (masses[:, None] * masses[None, :]) / (r2 + softening**2) ** 1.5
-    np.fill_diagonal(coeff, 0.0)
-    dH_dq = G * np.sum(coeff[:, :, None] * diff, axis=1)  # (n, d)
+    # Preserve the released generator's accumulation order for the same
+    # trajectory-reproducibility reason as in ``hamiltonian``.
+    n_particles = len(masses)
+    dH_dq = np.zeros_like(q)
+    for i in range(n_particles):
+        for j in range(n_particles):
+            if i != j:
+                r_vec = q[i] - q[j]
+                r = np.linalg.norm(r_vec)
+                r_soft = np.sqrt(r**2 + softening**2)
+                dH_dq[i] += G * masses[i] * masses[j] * r_vec / (r_soft**3)
 
     return dH_dq, dH_dp
 
@@ -231,6 +240,12 @@ if __name__ == "__main__":
         help="Percentile threshold for gradient filtering (default: 95.0)",
     )
     parser.add_argument("--seed", type=int, default=42, help="Random seed (default: 42)")
+    parser.add_argument(
+        "--output-file",
+        type=str,
+        default=None,
+        help="Optional explicit NPZ path (default: nbody/nbody_nN_dD.npz)",
+    )
 
     args = parser.parse_args()
 
@@ -305,21 +320,25 @@ if __name__ == "__main__":
     print(f"  Max:    {grad_norms_filtered.max():.4f}")
     print("=" * 50)
 
-    # Create nbody directory if it doesn't exist
+    # Create the destination directory if it doesn't exist.
     import os
 
-    os.makedirs("nbody", exist_ok=True)
-
-    # Create filename with n_particles and n_dims
-    filename_base = f"nbody_n{args.n_particles}_d{args.n_dims}"
-
-    # Save dataset
-    output_file = f"nbody/{filename_base}.npz"
+    output_file = args.output_file or f"nbody/nbody_n{args.n_particles}_d{args.n_dims}.npz"
+    output_parent = os.path.dirname(output_file)
+    if output_parent:
+        os.makedirs(output_parent, exist_ok=True)
+    if os.path.exists(output_file):
+        raise FileExistsError(f"refusing to overwrite dataset: {output_file}")
     np.savez(
         output_file,
         X=X,  # Full states
         E=y,  # Full energies (Hamiltonian values)
         F=dy,  # Full gradients (forces)
+        generator_protocol=GENERATOR_PROTOCOL,
+        generator_upstream_repository=UPSTREAM_REPOSITORY,
+        generator_upstream_commit=UPSTREAM_COMMIT,
+        generator_upstream_get_nbody_blob=UPSTREAM_GET_NBODY_BLOB,
+        generator_seed=args.seed,
         **info,
     )
     print(f"Saved dataset to {output_file}")

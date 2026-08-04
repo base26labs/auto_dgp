@@ -1,0 +1,88 @@
+{
+  "schema": "paper_nbody_prism_confirmation_release_v1",
+  "status": "complete",
+  "candidate": "PRISM-GP-30/16",
+  "baseline": "TERA-20",
+  "paper_reference": "https://arxiv.org/abs/2505.09134",
+  "protocol_path": "docs/PRISM_PAPER_NBODY_CONFIRMATION.md",
+  "development_source_commit": "076315efdeef4492897651515eaeeed95e8dd863",
+  "confirmation_git_commit": "b66f60e08bc527b5cbcf6ccd99fe8097de82a912",
+  "cluster": {
+    "data_job": "2814655",
+    "benchmark_job": "2814735",
+    "partition": "short",
+    "allocation": "shared",
+    "cpus_per_task": 8,
+    "gpu": false,
+    "exclusive": false,
+    "wall_clock_used_for_claim": false
+  },
+  "corpus": {
+    "generation_seed": 43,
+    "rows_per_particle_count": 9500,
+    "split_seeds": [6535, 8830, 92357],
+    "sha256": {
+      "n4": "5a5d1981d0c5e8b4c6f28c98bb2c44472601153f5df96f0f1a59d7fb8e02badb",
+      "n6": "1a31da3d25726ff18fdd8089fe810a8c539df23c83e268c41761e5b3c4ce45a6",
+      "n8": "c8538956831b2561563cb68084d741bc9dd93df2ecbbabeb1c13a639c72dcd5e",
+      "n10": "5833a22b74609b53683ab3ef1840aa2f7230279b13f28c0f284952e29796cf86"
+    }
+  },
+  "result": {
+    "remote_root": "runs/paper_nbody_prism_confirm_seed43_v1",
+    "aggregate_path": "runs/paper_nbody_prism_confirm_seed43_v1/aggregate.json",
+    "aggregate_sha256": "d4313bdcf9686b46ed9fa3f994862735249f3bc2b6e40da5bf14fadf8f85e3da",
+    "task_count": 12,
+    "all_array_hashes_verified": true,
+    "maximum_fresh_relative_residual": 9.997316169352288e-11,
+    "maximum_flop_ratio_to_TERA_20": 0.7288640625,
+    "maximum_state_ratio_to_TERA_20": 0.11475
+  },
+  "decision_rule": {
+    "value_rmse_mean_delta_maximum": 0.0001,
+    "value_nll_mean_delta": "strictly_below_zero",
+    "value_nll_variance": "observation_variance",
+    "gradient_rmse_mean_delta": "strictly_below_zero",
+    "resource_and_solve_gates": "every_task",
+    "statistical_significance_claimed": false
+  },
+  "assessment": {
+    "passes_frozen_paper_style_rule": true,
+    "paired_PRISM_minus_TERA_mean": {
+      "n4": {
+        "value_rmse": 3.286851374536756e-7,
+        "value_nll": -0.00471168719916711,
+        "gradient_rmse": -0.07991698272364019
+      },
+      "n6": {
+        "value_rmse": -6.956028505052576e-8,
+        "value_nll": -0.0029489027466407247,
+        "gradient_rmse": -0.02876276136869027
+      },
+      "n8": {
+        "value_rmse": -1.5141810245459613e-8,
+        "value_nll": -0.0018719102289122339,
+        "gradient_rmse": -0.008845242171475162
+      },
+      "n10": {
+        "value_rmse": 1.285301541587014e-8,
+        "value_nll": -0.0008818668789234985,
+        "gradient_rmse": -0.0027377613007234145
+      }
+    }
+  },
+  "task_artifact_sha256": [
+    {"task": 0, "json": "1cd17b2051fc3e0f584759e9d6f8ed8dc06ae72a98e80ac4985d1f182ea8493d", "npz": "71d64543ecf09d06a53a927c78a3fe5726b7f46474f25d7465ac6e9ba272f011"},
+    {"task": 1, "json": "b5dbca68a5ac69e4ca97529887f727c57221bd646ecba01771d892548fcecdec", "npz": "b0359ca9c1b5d34808d3535f33d450d4c90bd5169d03983ef1dfa564ee268c23"},
+    {"task": 2, "json": "ba02dbe414ddc09218c1765bb978f932f7398b740c55b5ba8181e210c12110f5", "npz": "ce440c48181ed844b9b45433196b8fbc132b00de37715efd4c2d5c4d645dea0e"},
+    {"task": 3, "json": "574e8b7224d86ff9b54bf257a10135d196f97c6ab97b436b3e84e7e7a3e3315e", "npz": "0ec5a160cde75b0b5e95088c2dac9d3070ed77fdcc582a382e669afd385253c9"},
+    {"task": 4, "json": "1fdc8865d7d56fc4793e7ed4e48b88f8c78f935dce8aba32eb438437bfd4e162", "npz": "8b87787f73f0430be99e36bd8c58d539cf67b866834676489a3de876cf05ad78"},
+    {"task": 5, "json": "577dbc2342dd7fbf0db43e42c26974dbbffdaf04a57988e47c43fb1abadb6abb", "npz": "3282b79f0296b17a14eceb33ec455d86175e519aec707a7c716c517bf863f6f6"},
+    {"task": 6, "json": "2bc4344540fc0dfdbc7d6ad731c4ac4332402fe0912908ebc30149cfcab7e0ee", "npz": "fd3b7ad692e0bdb6e9ad4ab101fbf2df5ab848512be7f491a1aa56e618f0f71c"},
+    {"task": 7, "json": "8df9261feaab391e12f82666a406232decc49b1c655a9e2f0101bdf2aec810d3", "npz": "61463d431964a0b4cfb0b44452cb85a88c5643768799d1d25659037db15ff896"},
+    {"task": 8, "json": "80daf31550628f9188e495c251b4104007025a3c479a2ee3ada02653e43aed26", "npz": "67cc13374b39800e710e5dc74f48af393ee9003278e6a0962b808ff4fd953456"},
+    {"task": 9, "json": "788e666ccf4787b6f9a4aabe45b2674319243fa6877e7b3096f6bb084d036add", "npz": "587ce8b136a8b3471d8be3f3c86b21620a66aaa0cfb5577c645cbade0b636809"},
+    {"task": 10, "json": "cbf6849ccaa2f59ebb73db3a7e25021f1e320024b1f1eb3316c059a72bdcceaa", "npz": "f06be09fe60a3117c36ade586bb0e38b746690a6de20734b3cddaaa7c35c568b"},
+    {"task": 11, "json": "e4e380c9059594438b10a9b7d39ea63b8e877c48f2848edba944d7fff4a50ae3", "npz": "ef495a58412e05683aa97a3b805caba9dc5d25d3791e05e0a9ef672afb2f3162"}
+  ]
+}
