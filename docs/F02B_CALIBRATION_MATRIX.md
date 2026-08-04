@@ -58,10 +58,11 @@ rebuilt intermediates against the actual function and q Cholesky inputs, and exe
 registered precision arms on CPU.  The registered stress adapter now fixes its exact-promoted
 CPU-float64 solve, source-fp32 neighbours and cutoff, zero start, tolerance and iteration cap,
 hash-derived probes, reverse permutation, adjacent Givens support rotation, zero-coordinate
-augmentation, and native-fp64 cutoff comparison.  Full-q/stress artifact integration, strict
-122-slot intake and aggregate, discovery/locked-holdout threshold workflow, and the probe Slurm
-runner remain incomplete.  This checkpoint therefore still authorizes no Slurm submission and no
-confirmatory access.
+augmentation, and native-fp64 cutoff comparison.  The immutable target artifact now accepts matching
+full-q and stress evidence only beside its CPU-float64 ORBIT target and preserves their independent
+identities.  Strict 122-slot intake and aggregate, discovery/locked-holdout threshold workflow, and
+the probe Slurm runner remain incomplete.  This checkpoint therefore still authorizes no Slurm
+submission and no confirmatory access.
 
 The earlier v3 artifact from job 2810629 motivated the strata and fault tests but is excluded from
 fitting numerical thresholds.  In particular, its observed errors may not be rounded upward and
@@ -405,6 +406,13 @@ Each task binds the calibration ID and matrix hashes, task index and stable coor
 catalog identities/hashes, exact evaluation source rows, fixed-neighbour source rows, fit artifact
 hash, clean commit/tree, TERA gitlink, dependency hashes, runtime packages, and shared CPU-only
 Slurm allocation evidence.  Output paths are identity-derived and never overwritten.
+
+Target artifact schema v2 stores ORBIT as the required arm and support64, full-q, and rank-boundary
+stress as optional but identity-checked companions.  Full-q must match the selected m=50 CPU-float64
+target, including its main N0 hashes and neighbour rows.  Stress must match the eligible task and
+target while retaining its separate stress-neighbour binding, N0 grid/stratum hashes, solve policy,
+five diagnostics, and both source-cutoff and native-fp64 projectors.  Canonical bytes detach all
+nested mutable evidence and bind the resulting record by raw SHA-256.
 
 The three hashes live in a non-recursive execution envelope outside the canonical task record being
 hashed.  The scaffold CLI record alone is not this envelope and cannot be submitted directly.

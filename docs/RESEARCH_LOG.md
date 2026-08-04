@@ -7,6 +7,25 @@ scope downgrades are reported in place, loudly, naming the check that failed.
 
 ---
 
+## 2026-08-04 — F02b full-q/stress target artifact integration: **implemented and locally verified**
+
+The immutable target artifact schema is now v2.  A CPU-float64 ORBIT target can carry matching
+support64, released full-q, and rank-boundary stress evidence without weakening their separate
+identities.  Full-q attachment requires the same task, target, main N0 grid/stratum hashes, selected
+rank, and 50-neighbour rows; its four arm names and all represented-system/RHS digests are retained.
+Stress attachment requires the same task/source arm/target, the registered `m=D-5`, exact tolerance
+and iteration cap, CPU-float64 projectors, and its separate neighbour, geometry-grid, stratum, and
+stress-binding hashes.  Canonical extraction copies all nested dictionaries and tensors before
+hashing, while mismatched stress identity is rejected.
+
+One existing synthetic full-q fixture and the single compact stress fixture exercised the new
+positive paths; the latter also covered the identity rejection.  This is artifact integrity and
+numerical-mechanism evidence only.  No corpus, labels, GPU, Slurm job, runtime/cost comparison, or
+confirmatory replica was accessed.  Strict 122-slot intake, threshold discovery, and the authorized
+shared-CPU runner remain pending.
+
+---
+
 ## 2026-08-04 — Registered F02b rank-boundary stress suite: **implemented and locally verified, not executed on corpus**
 
 The work-plan schema is now v3 with hash

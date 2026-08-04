@@ -23,28 +23,66 @@ from experiments.f02b_calibration_contract import (
     canonical_json_bytes,
     parse_strict_json_bytes,
 )
-from experiments.f02b_calibration_probe_core import PRIMARY_EVALUATION_ROW_COUNT
+from experiments.f02b_calibration_full_q import (
+    FULL_Q_ARM_NAMES,
+    FULL_Q_M,
+    FullQTargetExecution,
+)
+from experiments.f02b_calibration_probe_core import (
+    PRIMARY_EVALUATION_ROW_COUNT,
+    STRESS_TOLERANCE,
+)
 from experiments.f02b_calibration_probe_execution import (
     OrbitTargetExecution,
     Support64TargetExecution,
 )
+from experiments.f02b_calibration_stress import StressTargetExecution
 
-PROBE_TARGET_ARTIFACT_SCHEMA_VERSION = "f02b_calibration_probe_target_artifact_v1"
+PROBE_TARGET_ARTIFACT_SCHEMA_VERSION = "f02b_calibration_probe_target_artifact_v2"
 PROBE_TARGET_ARTIFACT_TYPE = "f02b_registered_numerical_target"
 _TOP_LEVEL_FIELDS = {
     "artifact_type",
     "calibration_id",
+    "full_q",
     "orbit",
     "schema_version",
     "source_arm_binding_sha256",
     "source_rank_grid_sha256",
     "source_rank_reference_sha256",
     "strata_selection_sha256",
+    "stress",
     "support64",
     "target_position",
     "target_source_index",
     "task_index",
     "task_record",
+}
+_FULL_Q_FIELDS = {
+    "arms",
+    "canonical_arm_name",
+    "diagnostic_role",
+    "m",
+    "neighbour_positions",
+    "neighbour_source_indices",
+    "q_system_dimension",
+    "support_projector_sha256",
+    "support_rank",
+}
+_STRESS_FIELDS = {
+    "base_solve",
+    "m",
+    "max_iterations",
+    "native_fp64_q_projector",
+    "neighbour_positions",
+    "neighbour_source_indices",
+    "requested_tolerance",
+    "selected_rank",
+    "source_q_projector",
+    "source_rank_grid_sha256",
+    "source_rank_reference_sha256",
+    "strata_selection_sha256",
+    "stress_binding_sha256",
+    "tests",
 }
 
 
@@ -217,6 +255,45 @@ def _support64_payload(execution: Support64TargetExecution) -> dict[str, Any]:
     }
 
 
+def _full_q_payload(execution: FullQTargetExecution) -> dict[str, Any]:
+    return {
+        "arms": [_json_value(arm) for arm in execution.arms],
+        "canonical_arm_name": execution.canonical_arm_name,
+        "diagnostic_role": execution.diagnostic_role,
+        "m": execution.m,
+        "neighbour_positions": _tensor_payload(execution.neighbour_positions),
+        "neighbour_source_indices": _tensor_payload(
+            execution.neighbour_source_indices
+        ),
+        "q_system_dimension": execution.q_system_dimension,
+        "support_projector_sha256": execution.support_projector_sha256,
+        "support_rank": execution.support_rank,
+    }
+
+
+def _stress_payload(execution: StressTargetExecution) -> dict[str, Any]:
+    return {
+        "base_solve": _json_value(execution.base_solve),
+        "m": execution.m,
+        "max_iterations": execution.max_iterations,
+        "native_fp64_q_projector": _tensor_payload(
+            execution.native_fp64_q_projector
+        ),
+        "neighbour_positions": _tensor_payload(execution.neighbour_positions),
+        "neighbour_source_indices": _tensor_payload(
+            execution.neighbour_source_indices
+        ),
+        "requested_tolerance": execution.requested_tolerance,
+        "selected_rank": execution.selected_rank,
+        "source_q_projector": _tensor_payload(execution.source_q_projector),
+        "source_rank_grid_sha256": execution.source_rank_grid_sha256,
+        "source_rank_reference_sha256": execution.source_rank_reference_sha256,
+        "strata_selection_sha256": execution.strata_selection_sha256,
+        "stress_binding_sha256": execution.stress_binding_sha256,
+        "tests": _json_value(execution.tests),
+    }
+
+
 def _validate_matching_support64(
     orbit: OrbitTargetExecution,
     support64: Support64TargetExecution,
@@ -247,10 +324,107 @@ def _validate_matching_support64(
         raise ProbeTargetArtifactError("support64 neighbours do not match ORBIT evidence")
 
 
+def _validate_matching_full_q(
+    orbit: OrbitTargetExecution,
+    full_q: FullQTargetExecution,
+) -> None:
+    scalar_fields = (
+        "task_index",
+        "source_arm_binding_sha256",
+        "source_rank_reference_sha256",
+        "source_rank_grid_sha256",
+        "strata_selection_sha256",
+        "target_position",
+        "target_source_index",
+    )
+    if any(getattr(orbit, name) != getattr(full_q, name) for name in scalar_fields):
+        raise ProbeTargetArtifactError("full-q identity does not match ORBIT target evidence")
+    if (
+        orbit.compute_dtype != torch.float64
+        or not orbit.include_stratum_sweep
+        or full_q.m != FULL_Q_M
+        or full_q.q_system_dimension != FULL_Q_M * FULL_Q_M
+        or full_q.support_rank != orbit.system.geometry.rank
+        or full_q.canonical_arm_name != FULL_Q_ARM_NAMES[2]
+        or tuple(arm.name for arm in full_q.arms) != FULL_Q_ARM_NAMES
+    ):
+        raise ProbeTargetArtifactError(
+            "full-q may accompany only its selected CPU-float64 ORBIT target"
+        )
+    if not torch.equal(orbit.neighbour_positions, full_q.neighbour_positions) or not torch.equal(
+        orbit.neighbour_source_indices,
+        full_q.neighbour_source_indices,
+    ):
+        raise ProbeTargetArtifactError("full-q neighbours do not match ORBIT evidence")
+    _validate_sha256(full_q.support_projector_sha256, "full_q.support_projector_sha256")
+    for index, arm in enumerate(full_q.arms):
+        _validate_sha256(
+            arm.represented_system_sha256,
+            f"full_q.arms[{index}].represented_system_sha256",
+        )
+        _validate_sha256(
+            arm.represented_rhs_sha256,
+            f"full_q.arms[{index}].represented_rhs_sha256",
+        )
+
+
+def _validate_matching_stress(
+    orbit: OrbitTargetExecution,
+    stress: StressTargetExecution,
+) -> None:
+    scalar_fields = (
+        "task_index",
+        "source_arm_binding_sha256",
+        "target_position",
+        "target_source_index",
+    )
+    if any(getattr(orbit, name) != getattr(stress, name) for name in scalar_fields):
+        raise ProbeTargetArtifactError("stress identity does not match ORBIT target evidence")
+    task = probe_task_for_index(orbit.task_index)
+    task_record = task.as_record()
+    expected_iterations = min(
+        4 * stress.m * min(stress.m, task_record["D"] - 6),
+        4096,
+    )
+    if (
+        orbit.compute_dtype != torch.float64
+        or task.stress_m != stress.m
+        or stress.requested_tolerance != STRESS_TOLERANCE
+        or stress.max_iterations != expected_iterations
+        or stress.base_solve.get("rank") != stress.selected_rank
+        or stress.base_solve.get("requested_tolerance") != STRESS_TOLERANCE
+        or stress.base_solve.get("max_iterations") != expected_iterations
+        or stress.neighbour_positions.dtype != torch.long
+        or stress.neighbour_source_indices.dtype != torch.long
+        or stress.neighbour_positions.device.type != "cpu"
+        or stress.neighbour_source_indices.device.type != "cpu"
+        or stress.neighbour_positions.shape != (stress.m,)
+        or stress.neighbour_source_indices.shape != (stress.m,)
+        or stress.source_q_projector.dtype != torch.float64
+        or stress.native_fp64_q_projector.dtype != torch.float64
+        or stress.source_q_projector.device.type != "cpu"
+        or stress.native_fp64_q_projector.device.type != "cpu"
+        or stress.source_q_projector.shape != (stress.m, stress.m)
+        or stress.native_fp64_q_projector.shape != (stress.m, stress.m)
+    ):
+        raise ProbeTargetArtifactError(
+            "stress may accompany only its registered CPU-float64 ORBIT target"
+        )
+    for name in (
+        "stress_binding_sha256",
+        "source_rank_reference_sha256",
+        "source_rank_grid_sha256",
+        "strata_selection_sha256",
+    ):
+        _validate_sha256(getattr(stress, name), f"stress.{name}")
+
+
 def build_canonical_probe_target_artifact(
     orbit: OrbitTargetExecution,
     *,
     support64: Support64TargetExecution | None = None,
+    full_q: FullQTargetExecution | None = None,
+    stress: StressTargetExecution | None = None,
 ) -> CanonicalProbeTargetArtifact:
     """Copy one target execution into immutable, hash-bound canonical bytes."""
 
@@ -283,6 +457,14 @@ def build_canonical_probe_target_artifact(
                 "support64 must be an exact Support64TargetExecution"
             )
         _validate_matching_support64(orbit, support64)
+    if full_q is not None:
+        if type(full_q) is not FullQTargetExecution:
+            raise ProbeTargetArtifactError("full_q must be an exact FullQTargetExecution")
+        _validate_matching_full_q(orbit, full_q)
+    if stress is not None:
+        if type(stress) is not StressTargetExecution:
+            raise ProbeTargetArtifactError("stress must be an exact StressTargetExecution")
+        _validate_matching_stress(orbit, stress)
     try:
         task_record = probe_task_for_index(orbit.task_index).as_record()
     except (IndexError, ValueError) as error:
@@ -301,6 +483,8 @@ def build_canonical_probe_target_artifact(
         "strata_selection_sha256": orbit.strata_selection_sha256,
         "orbit": _orbit_payload(orbit),
         "support64": None if support64 is None else _support64_payload(support64),
+        "full_q": None if full_q is None else _full_q_payload(full_q),
+        "stress": None if stress is None else _stress_payload(stress),
     }
     try:
         payload_bytes = canonical_json_bytes(payload)
@@ -361,10 +545,73 @@ def parse_canonical_probe_target_artifact(
         "strata_selection_sha256",
     ):
         _validate_sha256(parsed[name], name)
-    if not isinstance(parsed["orbit"], dict) or (
-        parsed["support64"] is not None and not isinstance(parsed["support64"], dict)
+    if not isinstance(parsed["orbit"], dict) or any(
+        parsed[name] is not None and not isinstance(parsed[name], dict)
+        for name in ("support64", "full_q", "stress")
     ):
         raise ProbeTargetArtifactError("artifact numerical arm records are malformed")
+    if parsed["full_q"] is not None:
+        full_q = parsed["full_q"]
+        if set(full_q) != _FULL_Q_FIELDS or (
+            parsed["orbit"].get("compute_dtype") != "float64"
+            or parsed["orbit"].get("include_stratum_sweep") is not True
+            or full_q["m"] != FULL_Q_M
+            or full_q["q_system_dimension"] != FULL_Q_M * FULL_Q_M
+            or full_q["canonical_arm_name"] != FULL_Q_ARM_NAMES[2]
+            or not isinstance(full_q["arms"], list)
+            or tuple(arm.get("name") for arm in full_q["arms"] if isinstance(arm, dict))
+            != FULL_Q_ARM_NAMES
+        ):
+            raise ProbeTargetArtifactError("artifact full-q record is malformed")
+        _validate_sha256(
+            full_q["support_projector_sha256"],
+            "full_q.support_projector_sha256",
+        )
+    if parsed["stress"] is not None:
+        stress = parsed["stress"]
+        if set(stress) != _STRESS_FIELDS:
+            raise ProbeTargetArtifactError("artifact stress record is malformed")
+        if (
+            type(stress["m"]) is not int
+            or type(stress["selected_rank"]) is not int
+            or type(stress["max_iterations"]) is not int
+            or type(stress["requested_tolerance"]) is not float
+        ):
+            raise ProbeTargetArtifactError("artifact stress record is malformed")
+        expected_iterations = min(
+            4
+            * stress["m"]
+            * min(stress["m"], parsed["task_record"]["D"] - 6),
+            4096,
+        )
+        if (
+            parsed["orbit"].get("compute_dtype") != "float64"
+            or stress["m"] != parsed["task_record"]["stress_m"]
+            or stress["requested_tolerance"] != STRESS_TOLERANCE
+            or stress["max_iterations"] != expected_iterations
+            or not isinstance(stress["base_solve"], dict)
+            or stress["base_solve"].get("rank") != stress["selected_rank"]
+            or stress["base_solve"].get("requested_tolerance")
+            != STRESS_TOLERANCE
+            or stress["base_solve"].get("max_iterations") != expected_iterations
+            or not isinstance(stress["tests"], dict)
+            or set(stress["tests"])
+            != {
+                "support_complement",
+                "permutation",
+                "support_rotation",
+                "exact_zero_augmentation",
+                "discarded_mode_leakage",
+            }
+        ):
+            raise ProbeTargetArtifactError("artifact stress record is malformed")
+        for name in (
+            "stress_binding_sha256",
+            "source_rank_reference_sha256",
+            "source_rank_grid_sha256",
+            "strata_selection_sha256",
+        ):
+            _validate_sha256(stress[name], f"stress.{name}")
     return parsed
 
 

@@ -163,6 +163,7 @@ def _geometry_and_strata(arm32: RegisteredOrbitArmInputs):
 
 def test_registered_stress_suite_covers_its_core_invariants() -> None:
     arm32 = _synthetic_arm(task_index=0, train_count=64)
+    arm64 = promote_registered_orbit_arm_to_float64(arm32)
     stress = build_registered_stress_inputs(arm32)
     geometries = tuple(
         scan_registered_stress_geometry(arm32, stress, position)
@@ -171,7 +172,7 @@ def test_registered_stress_suite_covers_its_core_invariants() -> None:
     strata = select_registered_stress_stratum(arm32, stress, geometries)
     execution = execute_registered_stress_target(
         arm32,
-        promote_registered_orbit_arm_to_float64(arm32),
+        arm64,
         stress,
         geometries[strata.selected_target_position],
         strata,
@@ -191,6 +192,26 @@ def test_registered_stress_suite_covers_its_core_invariants() -> None:
     assert max(mapping.values()) < 1e-12
     for name in ("permutation", "support_rotation", "exact_zero_augmentation"):
         assert max(execution.tests[name]["moments"].values()) < 1e-10
+
+    orbit_geometries, orbit_strata = _geometry_and_strata(arm32)
+    orbit = execute_registered_orbit_target(
+        arm64,
+        orbit_geometries[execution.target_position],
+        orbit_strata,
+    )
+    artifact = build_canonical_probe_target_artifact(orbit, stress=execution)
+    parsed = parse_canonical_probe_target_artifact(
+        artifact.payload_bytes,
+        expected_sha256=artifact.payload_sha256,
+    )
+    assert parsed["stress"]["m"] == 7
+    assert set(parsed["stress"]["tests"]) == set(execution.tests)
+
+    with pytest.raises(ProbeTargetArtifactError, match="stress identity"):
+        build_canonical_probe_target_artifact(
+            orbit,
+            stress=replace(execution, target_position=execution.target_position + 1),
+        )
 
 
 def test_nonreference_task_rejects_registered_stress_suite() -> None:
@@ -366,6 +387,21 @@ def test_registered_m50_full_q_executes_real_released_path_and_preserves_failure
     assert torch.equal(
         result.neighbour_source_indices,
         arm32.train.source_indices[result.neighbour_positions],
+    )
+
+    orbit = execute_registered_orbit_target(
+        arm64,
+        geometries[position],
+        strata,
+    )
+    artifact = build_canonical_probe_target_artifact(orbit, full_q=result)
+    parsed = parse_canonical_probe_target_artifact(
+        artifact.payload_bytes,
+        expected_sha256=artifact.payload_sha256,
+    )
+    assert parsed["full_q"]["q_system_dimension"] == 2_500
+    assert [arm["name"] for arm in parsed["full_q"]["arms"]] == list(
+        FULL_Q_ARM_NAMES
     )
 
 
