@@ -3,8 +3,9 @@
 The paper arrays and released TERA fit are float32.  The formal v4 benchmark
 casts prediction arithmetic to float64 and consequently used float64 epsilon
 for ORBIT's default numerical-rank rule.  This probe changes exactly one
-method choice: ORBIT-PA30 uses the source float32 epsilon while retaining
-float64 prediction arithmetic and the registered m=30, tolerance, and solver.
+method choice: ORBIT-PA30-R16 uses the source float32 epsilon and a fixed
+rank-16 direction budget while retaining float64 prediction arithmetic and the
+registered m=30, tolerance, and solver.
 
 The already-read v4 corpus is development data.  Results from this module are
 not confirmatory and cannot revive or modify the v4 assessment.
@@ -37,11 +38,12 @@ from experiments.paper_nbody_benchmark import (
     load_paper_task_data,
 )
 
-SCHEMA = "paper_nbody_precision_rank_development_task_v1"
+SCHEMA = "paper_nbody_precision_rank_development_task_v2"
 SOURCE_SCHEMA = "paper_nbody_benchmark_task_v4"
 SOURCE_COMMIT = "076315efdeef4492897651515eaeeed95e8dd863"
 DEVELOPMENT_TASKS = TASKS[:4]
 SOURCE_RANK_EPSILON = torch.finfo(torch.float32).eps
+MAXIMUM_DIRECTION_RANK = 16
 
 
 def _git(repo_root: Path, *args: str) -> str:
@@ -148,6 +150,7 @@ def run_task(
         test.X,
         parameters,
         m=30,
+        rank=MAXIMUM_DIRECTION_RANK,
         rank_epsilon=SOURCE_RANK_EPSILON,
         cg_tolerance=ORBIT_CG_TOLERANCE,
         cg_max_iterations=ORBIT_CG_MAX_ITERATIONS,
@@ -183,7 +186,7 @@ def run_task(
         "target_value": test.value.detach().cpu().numpy(),
         "target_gradient": test.gradient.detach().cpu().numpy(),
         **_tensor_arrays("orbit20", base),
-        **_tensor_arrays("orbit_pa30", candidate),
+        **_tensor_arrays("orbit_pa30r16", candidate),
     }
     np.savez_compressed(arrays_path, **arrays)
 
@@ -202,9 +205,13 @@ def run_task(
             "seed": task.seed,
         },
         "candidate": {
-            "name": "ORBIT-PA30",
-            "description": "m=30 with source-float32 numerical-rank epsilon and float64 solves",
+            "name": "ORBIT-PA30-R16",
+            "description": (
+                "m=30 with source-float32 numerical-rank epsilon, a fixed rank-16 "
+                "direction budget, and float64 solves"
+            ),
             "m": 30,
+            "maximum_direction_rank": MAXIMUM_DIRECTION_RANK,
             "rank_epsilon": SOURCE_RANK_EPSILON,
             "rank_epsilon_source": "torch.float32_input_arrays",
             "prediction_dtype": "float64",
@@ -265,7 +272,7 @@ def main() -> None:
     parser.add_argument(
         "--output-root",
         type=Path,
-        default=Path("runs/paper_nbody_pa30_dev_v1"),
+        default=Path("runs/paper_nbody_pa30r16_dev_v2"),
     )
     args = parser.parse_args()
     torch.set_num_threads(8)

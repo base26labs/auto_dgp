@@ -25,6 +25,7 @@ def test_parameters_preserve_frozen_variance_semantics() -> None:
     assert parameters.sigma_f == pytest.approx(1e-3)
     assert parameters.sigma_g == pytest.approx(2e-3)
     assert dev.SOURCE_RANK_EPSILON == torch.finfo(torch.float32).eps
+    assert dev.MAXIMUM_DIRECTION_RANK == 16
 
 
 def test_parameters_reject_nonpositive_lengthscale() -> None:
